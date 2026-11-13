@@ -3,9 +3,13 @@ import {
   loadR2Config,
   isR2Configured,
   uploadRemoteUrlToR2,
-} from '../../server-r2';
-import { Track, LyricLine } from '../../src/types/music';
-import { readJsonBody, sendJson } from '../_utils';
+} from '../_lib/r2.js';
+import { readJsonBody, sendJson } from '../_utils.js';
+
+interface LyricLine {
+  time: number;
+  text: string;
+}
 
 interface SpotflowBody {
   spotflowUrl?: string;
@@ -107,7 +111,7 @@ export default async function handler(
     const r2Config = loadR2Config();
     const shouldSaveToR2 = isR2Configured(r2Config) && saveToR2 !== false;
 
-    const syncedTracks: Track[] = await Promise.all(
+    const syncedTracks = await Promise.all(
       data.map(async (item, idx) => {
         const trackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
         const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);

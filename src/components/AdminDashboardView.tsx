@@ -96,6 +96,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     bucketName: string;
     publicDomain: string;
     missingVars?: string[];
+    serverError?: string;
   }>({ isConfigured: false, accountId: '', bucketName: '', publicDomain: '', missingVars: [] });
   const [isTestingR2, setIsTestingR2] = useState<boolean>(false);
   const [r2Notice, setR2Notice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -462,9 +463,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         setR2Notice({
           type: 'error',
           message:
-            status.missingVars && status.missingVars.length > 0
+            status.serverError ||
+            (status.missingVars && status.missingVars.length > 0
               ? `Thiếu biến môi trường trên server: ${status.missingVars.join(', ')}. Hãy kiểm tra Vercel Environment Variables và Redeploy.`
-              : 'Không nhận được cấu hình Cloudflare R2 từ API server.',
+              : 'Không nhận được cấu hình Cloudflare R2 từ API server.'),
         });
         return;
       }

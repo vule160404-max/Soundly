@@ -2,8 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   classifyBatchWithGemini,
   ClassifyInputTrack,
-} from '../../server-ai';
-import { readJsonBody, sendJson } from '../_utils';
+} from '../_lib/ai.js';
+import { readJsonBody, sendJson } from '../_utils.js';
 
 interface ClassifyBody {
   tracks?: Array<Record<string, unknown>>;

@@ -4,8 +4,8 @@ import {
   isR2Configured,
   getMissingR2EnvVars,
   testR2Connection,
-} from '../../server-r2';
-import { sendJson } from '../_utils';
+} from '../_lib/r2.js';
+import { sendJson } from '../_utils.js';
 
 export default async function handler(
   req: IncomingMessage,

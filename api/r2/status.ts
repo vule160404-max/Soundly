@@ -3,8 +3,8 @@ import {
   loadR2Config,
   isR2Configured,
   getMissingR2EnvVars,
-} from '../../server-r2';
-import { sendJson } from '../_utils';
+} from '../_lib/r2.js';
+import { sendJson } from '../_utils.js';
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'GET') {

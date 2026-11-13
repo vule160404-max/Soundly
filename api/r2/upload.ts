@@ -6,8 +6,8 @@ import {
   isR2Configured,
   getMissingR2EnvVars,
   uploadBufferToR2,
-} from '../../server-r2';
-import { sendJson } from '../_utils';
+} from '../_lib/r2.js';
+import { sendJson } from '../_utils.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),

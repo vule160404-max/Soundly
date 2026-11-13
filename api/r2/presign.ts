@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createR2PresignedUploadUrl } from '../../server-r2';
-import { readJsonBody, sendJson } from '../_utils';
+import { createR2PresignedUploadUrl } from '../_lib/r2.js';
+import { readJsonBody, sendJson } from '../_utils.js';
 
 interface PresignBody {
   fileName?: string;

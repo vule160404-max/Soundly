@@ -336,15 +336,37 @@ export const musicApi = {
     bucketName: string;
     publicDomain: string;
     missingVars?: string[];
+    serverError?: string;
   }> {
     try {
       const res = await fetch('/api/r2/status');
-      if (!res.ok || !isJsonResponse(res)) {
-        return { isConfigured: false, accountId: '', bucketName: '', publicDomain: '' };
+      if (!res.ok) {
+        return {
+          isConfigured: false,
+          accountId: '',
+          bucketName: '',
+          publicDomain: '',
+          serverError: `API /api/r2/status trả về lỗi HTTP ${res.status}`,
+        };
+      }
+      if (!isJsonResponse(res)) {
+        return {
+          isConfigured: false,
+          accountId: '',
+          bucketName: '',
+          publicDomain: '',
+          serverError: 'API /api/r2/status không trả về JSON hợp lệ',
+        };
       }
       return await res.json();
-    } catch {
-      return { isConfigured: false, accountId: '', bucketName: '', publicDomain: '' };
+    } catch (err) {
+      return {
+        isConfigured: false,
+        accountId: '',
+        bucketName: '',
+        publicDomain: '',
+        serverError: err instanceof Error ? err.message : 'Lỗi kết nối tới API server',
+      };
     }
   },
 
