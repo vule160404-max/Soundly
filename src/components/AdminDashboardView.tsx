@@ -110,10 +110,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // SpotFlow MP3 integration state
   const [spotflowUrl, setSpotflowUrl] = useState<string>(
-    'https://musictool-ytsg.onrender.com/api/external/tracks'
+    'https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/tracks'
   );
   const [spotflowApiKey, setSpotflowApiKey] = useState<string>(
-    'sf_live_b014f490c5f75dc3f64bd45d9ab82121'
+    'sf_live_6c0721b02ea06aeb15490e34fa740326'
   );
   const [spotflowSaveToR2, setSpotflowSaveToR2] = useState<boolean>(true);
   const [isSyncingSpotflow, setIsSyncingSpotflow] = useState<boolean>(false);
@@ -1134,7 +1134,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </label>
               <input
                 type="text"
-                placeholder="https://musictool-ytsg.onrender.com/api/external/tracks"
+                placeholder="https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/tracks"
                 value={spotflowUrl}
                 onChange={e => setSpotflowUrl(e.target.value)}
                 className="w-full bg-[#0d142c] border border-[#222f5e] rounded-lg px-3 py-2 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64]"

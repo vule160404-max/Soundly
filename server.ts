@@ -38,6 +38,7 @@ import {
 } from './server-r2';
 import crypto from 'node:crypto';
 import {
+  ALLOWED_SPOTFLOW_API_KEYS,
   DEFAULT_SPOTFLOW_API_KEY,
   ExistingTrackLookup,
   SpotflowIncomingItem,
@@ -861,7 +862,7 @@ async function startServer() {
       const providedKey = rawApiKey || bearerKey;
 
       const allowedKeys = Array.from(
-        new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY].filter(Boolean))
+        new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY, ...ALLOWED_SPOTFLOW_API_KEYS].filter(Boolean))
       );
       const isValidKey =
         Boolean(providedKey) &&

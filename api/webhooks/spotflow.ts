@@ -6,6 +6,7 @@ import {
   upsertR2CatalogTracksStrict,
 } from '../_lib/r2.js';
 import {
+  ALLOWED_SPOTFLOW_API_KEYS,
   DEFAULT_SPOTFLOW_API_KEY,
   SpotflowIncomingItem,
   ingestSpotflowTracks,
@@ -55,7 +56,7 @@ function verifySecretConstantTime(provided: string, expected: string): boolean {
 function isAuthorizedWebhookKey(provided: string, configuredSecret: string): boolean {
   if (!provided) return false;
   const allowedKeys = Array.from(
-    new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY].filter(Boolean))
+    new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY, ...ALLOWED_SPOTFLOW_API_KEYS].filter(Boolean))
   );
   return allowedKeys.some(expected => verifySecretConstantTime(provided, expected));
 }

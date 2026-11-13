@@ -8,9 +8,13 @@ import {
   uploadRemoteImageToR2,
 } from './r2.js';
 
-export const DEFAULT_SPOTFLOW_API_KEY = 'sf_live_b014f490c5f75dc3f64bd45d9ab82121';
+export const DEFAULT_SPOTFLOW_API_KEY = 'sf_live_6c0721b02ea06aeb15490e34fa740326';
+export const ALLOWED_SPOTFLOW_API_KEYS = [
+  'sf_live_6c0721b02ea06aeb15490e34fa740326',
+  'sf_live_b014f490c5f75dc3f64bd45d9ab82121',
+];
 export const DEFAULT_SPOTFLOW_ENRICH_URL =
-  'https://musictool-ytsg.onrender.com/api/external/enrich';
+  'https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/enrich';
 
 export interface SpotflowLyricLine {
   time: number;
