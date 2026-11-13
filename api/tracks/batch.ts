@@ -62,6 +62,11 @@ export default async function handler(
         aiReason: String(item.aiReason || 'Tải lên bởi quản trị viên'),
         lyrics,
         plays: typeof item.plays === 'number' ? item.plays : 0,
+        ...(item.spotifyTrackId ? { spotifyTrackId: String(item.spotifyTrackId) } : {}),
+        ...(item.spotifyUrl ? { spotifyUrl: String(item.spotifyUrl) } : {}),
+        ...(item.syncedLyrics ? { syncedLyrics: String(item.syncedLyrics) } : {}),
+        ...(item.plainLyrics ? { plainLyrics: String(item.plainLyrics) } : {}),
+        ...(item.lyricsMode ? { lyricsMode: item.lyricsMode } : {}),
       };
     });
 

@@ -1,88 +1,23 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  loadR2Config,
+  getR2CatalogTracks,
   isR2Configured,
-  uploadRemoteUrlToR2,
+  loadR2Config,
   upsertR2CatalogTracks,
 } from '../_lib/r2.js';
+import {
+  ExistingTrackLookup,
+  SpotflowIncomingItem,
+  ingestSpotflowTracks,
+  resolveSpotflowEndpoint,
+} from '../_lib/spotflow.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
-interface LyricLine {
-  time: number;
-  text: string;
-}
-
-interface SpotflowBody {
+interface SpotflowSyncBody {
   spotflowUrl?: string;
   apiKey?: string;
   saveToR2?: boolean;
-}
-
-interface SpotflowTrackItem {
-  jobId?: string;
-  title?: string;
-  artist?: string;
-  album?: string;
-  bitrate?: number;
-  downloadUrl?: string;
-  syncedLyrics?: string;
-  plainLyrics?: string;
-  downloadedAt?: string;
-  coverUrl?: string;
-}
-
-function resolveSpotflowEndpoint(rawUrl: string): string {
-  const trimmed = rawUrl.trim().replace(/\/+$/, '');
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  if (withProtocol.toLowerCase().endsWith('/api/external/tracks')) {
-    return withProtocol;
-  }
-  return `${withProtocol}/api/external/tracks`;
-}
-
-function resolveRemoteMediaUrl(rawUrl: string, baseEndpoint: string): string {
-  if (!rawUrl) return '';
-  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
-  try {
-    return new URL(rawUrl, baseEndpoint).toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
-function parseSpotflowLyrics(
-  syncedText?: string,
-  plainText?: string
-): LyricLine[] {
-  if (syncedText && typeof syncedText === 'string') {
-    const lines = syncedText.split('\n');
-    const result: LyricLine[] = [];
-    const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]\s*(.*)/;
-    for (const line of lines) {
-      const match = line.match(regex);
-      if (match) {
-        const mins = parseInt(match[1], 10);
-        const secs = parseInt(match[2], 10);
-        const millisStr = match[3] || '0';
-        const millis = parseInt(millisStr.padEnd(3, '0').slice(0, 3), 10);
-        const time = mins * 60 + secs + millis / 1000;
-        const text = match[4].trim();
-        if (text) {
-          result.push({ time, text });
-        }
-      }
-    }
-    if (result.length > 0) return result;
-  }
-
-  if (plainText && typeof plainText === 'string') {
-    const lines = plainText.split('\n').filter(l => l.trim().length > 0);
-    return lines.map((l, idx) => ({ time: idx * 6, text: l.trim() }));
-  }
-
-  return [{ time: 5, text: 'Đang phát bản nhạc từ SpotFlow MP3' }];
+  existingTracks?: ExistingTrackLookup[];
 }
 
 export default async function handler(
@@ -95,8 +30,9 @@ export default async function handler(
   }
 
   try {
-    const { spotflowUrl, apiKey, saveToR2 } =
-      await readJsonBody<SpotflowBody>(req);
+    const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } =
+      await readJsonBody<SpotflowSyncBody>(req);
+
     if (!spotflowUrl || !apiKey) {
       sendJson(res, 400, {
         error: 'Vui lòng cung cấp URL của SpotFlow và API Key.',
@@ -105,12 +41,13 @@ export default async function handler(
     }
 
     const endpoint = resolveSpotflowEndpoint(spotflowUrl);
+    const trimmedKey = apiKey.trim();
 
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
-        'X-API-Key': apiKey.trim(),
-        Authorization: `Bearer ${apiKey.trim()}`,
+        'X-API-Key': trimmedKey,
+        Authorization: `Bearer ${trimmedKey}`,
         Accept: 'application/json',
       },
     });
@@ -134,16 +71,16 @@ export default async function handler(
       return;
     }
 
-    const items: SpotflowTrackItem[] | null = Array.isArray(parsed)
+    const items: SpotflowIncomingItem[] | null = Array.isArray(parsed)
       ? parsed
       : parsed &&
           typeof parsed === 'object' &&
           Array.isArray((parsed as { tracks?: unknown }).tracks)
-        ? (parsed as { tracks: SpotflowTrackItem[] }).tracks
+        ? (parsed as { tracks: SpotflowIncomingItem[] }).tracks
         : parsed &&
             typeof parsed === 'object' &&
             Array.isArray((parsed as { data?: unknown }).data)
-          ? (parsed as { data: SpotflowTrackItem[] }).data
+          ? (parsed as { data: SpotflowIncomingItem[] }).data
           : null;
 
     if (!items) {
@@ -154,63 +91,43 @@ export default async function handler(
     }
 
     const r2Config = loadR2Config();
-    const shouldSaveToR2 = isR2Configured(r2Config) && saveToR2 !== false;
+    const r2Configured = isR2Configured(r2Config);
+    const r2Existing = r2Configured ? await getR2CatalogTracks() : [];
 
-    const syncedTracks = await Promise.all(
-      items.map(async (item, idx) => {
-        const rawTrackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
-        const trackId = rawTrackId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-        const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
-        let audioUrl = resolveRemoteMediaUrl(item.downloadUrl || '', endpoint);
-        const coverUrl = item.coverUrl
-          ? resolveRemoteMediaUrl(item.coverUrl, endpoint)
-          : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
-
-        if (shouldSaveToR2 && audioUrl) {
-          try {
-            const r2Upload = await uploadRemoteUrlToR2(
-              audioUrl,
-              `${item.artist || 'artist'} - ${item.title || 'song'}.mp3`
-            );
-            audioUrl = r2Upload.audioUrl;
-          } catch (r2Err) {
-            console.warn(
-              'Could not mirror SpotFlow file to Cloudflare R2, using direct url:',
-              r2Err
-            );
-          }
+    // Merge R2 existing catalog with client-side hints (e.g. tracks only in Firestore)
+    const mergedExisting: ExistingTrackLookup[] = [...r2Existing];
+    const seenIds = new Set(r2Existing.map(t => t.id));
+    if (Array.isArray(clientHints)) {
+      for (const hint of clientHints) {
+        if (hint && hint.id && !seenIds.has(hint.id)) {
+          mergedExisting.push(hint);
+          seenIds.add(hint.id);
         }
+      }
+    }
 
-        return {
-          id: trackId,
-          title: (item.title || 'Bài hát SpotFlow').trim(),
-          artist: (item.artist || 'Nghệ sĩ SpotFlow').trim(),
-          album: (item.album || 'SpotFlow MP3 Download').trim(),
-          audioUrl,
-          coverUrl,
-          duration: 210,
-          genre: 'Pop',
-          releaseYear: new Date().getFullYear(),
-          bpm: item.bitrate === 320 ? 120 : 110,
-          mood: 'Sôi động & Chất lượng cao',
-          aiClassified: true,
-          aiReason: shouldSaveToR2
-            ? 'Lưu trữ vĩnh viễn trên Cloudflare R2'
-            : `Đồng bộ tự động từ SpotFlow MP3 (${item.bitrate || 320}kbps)`,
-          lyrics,
-          plays: 0,
-        };
-      })
-    );
+    const result = await ingestSpotflowTracks({
+      items,
+      baseEndpoint: endpoint,
+      apiKey: trimmedKey,
+      saveToR2: saveToR2 !== false,
+      existingTracks: mergedExisting,
+      sourceLabel: 'SpotFlow MP3',
+    });
 
-    if (syncedTracks.length > 0 && isR2Configured(r2Config)) {
-      await upsertR2CatalogTracks(syncedTracks);
+    if (result.tracks.length > 0 && r2Configured) {
+      await upsertR2CatalogTracks(result.tracks);
     }
 
     sendJson(res, 200, {
       success: true,
-      count: syncedTracks.length,
-      tracks: syncedTracks,
+      count: result.addedCount,
+      addedCount: result.addedCount,
+      updatedCount: result.updatedCount,
+      skippedCount: result.skippedCount,
+      addedTracks: result.addedTracks,
+      updatedTracks: result.updatedTracks,
+      tracks: result.tracks,
     });
   } catch (err: unknown) {
     console.error('Spotflow sync error:', err);

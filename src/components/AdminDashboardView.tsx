@@ -107,7 +107,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [spotflowApiKey, setSpotflowApiKey] = useState<string>('');
   const [spotflowSaveToR2, setSpotflowSaveToR2] = useState<boolean>(true);
   const [isSyncingSpotflow, setIsSyncingSpotflow] = useState<boolean>(false);
-  const [spotflowMessage, setSpotflowMessage] = useState<string | null>(null);
+  const [spotflowNotice, setSpotflowNotice] = useState<{
+    type: 'success' | 'error';
+    message: string;
+    detail?: { addedCount: number; updatedCount: number; skippedCount: number };
+  } | null>(null);
 
   // Batch upload state (FILES ONLY, NO URLS!)
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
@@ -431,22 +435,42 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // Sync tracks from SpotFlow MP3 API
   const handleSyncSpotflow = async () => {
     if (!spotflowUrl.trim() || !spotflowApiKey.trim()) {
-      setSpotflowMessage('Vui lòng nhập đầy đủ URL SpotFlow và API Key.');
+      setSpotflowNotice({
+        type: 'error',
+        message: 'Vui lòng nhập đầy đủ URL SpotFlow và API Key.',
+      });
       return;
     }
     setIsSyncingSpotflow(true);
-    setSpotflowMessage(null);
+    setSpotflowNotice(null);
     try {
       const result = await musicApi.syncSpotflowTracks(
         spotflowUrl.trim(),
         spotflowApiKey.trim(),
-        spotflowSaveToR2
+        spotflowSaveToR2,
+        tracks
       );
-      onTracksUpdated([...result.tracks, ...tracks]);
-      setSpotflowMessage(`Đồng bộ thành công ${result.count} bài hát từ SpotFlow MP3 vào kho Soundly!`);
+
+      const updatedById = new Map(result.updatedTracks.map(t => [t.id, t]));
+      const mergedExisting = tracks.map(t => updatedById.get(t.id) || t);
+      const existingIds = new Set(mergedExisting.map(t => t.id));
+      const newAdded = result.addedTracks.filter(t => !existingIds.has(t.id));
+      if (newAdded.length > 0 || result.updatedTracks.length > 0) {
+        onTracksUpdated([...newAdded, ...mergedExisting]);
+      }
+
+      setSpotflowNotice({
+        type: 'success',
+        message: `Hoàn tất đồng bộ SpotFlow: Thêm mới ${result.addedCount} bài, cập nhật cover/lyrics ${result.updatedCount} bài, bỏ qua ${result.skippedCount} bài trùng.`,
+        detail: {
+          addedCount: result.addedCount,
+          updatedCount: result.updatedCount,
+          skippedCount: result.skippedCount,
+        },
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Đồng bộ thất bại.';
-      setSpotflowMessage(msg);
+      setSpotflowNotice({ type: 'error', message: msg });
     } finally {
       setIsSyncingSpotflow(false);
     }
@@ -814,21 +838,46 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span>Đồng bộ tự động từ SpotFlow MP3 API</span>
             </h3>
             <p className="text-xs text-[#a3aed0] mt-1">
-              Kết nối với công cụ tải nhạc SpotFlow MP3 của bạn để tự động đồng bộ bài hát, ảnh bìa và lời bài hát đồng bộ (syncedLyrics).
+              Kéo bài hát từ SpotFlow MP3 kèm MP3, ảnh bìa (hoặc trích xuất từ ID3 tag) và lời bài hát (syncedLyrics / plainLyrics), tự động chống trùng lặp và lưu trữ lâu dài trên Cloudflare R2.
             </p>
           </div>
 
-          {spotflowMessage && (
-            <div className="p-3.5 rounded-xl bg-[#0d142c] border border-[#f47b64]/30 text-xs text-[#f7f5f0] flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-[#f47b64] shrink-0" />
-              <span>{spotflowMessage}</span>
+          {spotflowNotice && (
+            <div
+              className={`p-3.5 rounded-xl border text-xs space-y-2 ${
+                spotflowNotice.type === 'success'
+                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-100'
+                  : 'bg-rose-950/60 border-rose-500/40 text-rose-200'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-semibold">
+                {spotflowNotice.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{spotflowNotice.message}</span>
+              </div>
+              {spotflowNotice.detail && (
+                <div className="flex flex-wrap gap-2 pl-6 text-[11px]">
+                  <span className="px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-200 font-bold">
+                    Thêm mới: {spotflowNotice.detail.addedCount}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-[#1c2852] text-[#f7f5f0] font-semibold">
+                    Cập nhật thiếu cover/lyrics: {spotflowNotice.detail.updatedCount}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-[#0d142c] text-[#a3aed0]">
+                    Bỏ qua trùng lặp: {spotflowNotice.detail.skippedCount}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
           <div className="space-y-4 max-w-xl">
             <div>
               <label className="text-xs text-[#8d99be] font-semibold block mb-1">
-                URL Tool SpotFlow MP3 (Base URL hoặc REST API Endpoint):
+                URL Tool SpotFlow MP3 (SPOTFLOW_URL):
               </label>
               <input
                 type="text"
@@ -841,7 +890,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
             <div>
               <label className="text-xs text-[#8d99be] font-semibold block mb-1">
-                API Key (X-API-Key / Bearer):
+                API Key (Header X-API-Key):
               </label>
               <input
                 type="password"
@@ -861,7 +910,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 className="w-4 h-4 rounded text-[#f47b64] accent-[#f47b64]"
               />
               <label htmlFor="spotflowSaveToR2" className="text-xs text-[#f7f5f0] cursor-pointer">
-                Lưu bản sao file MP3 sang Cloudflare R2 (Khuyên dùng - giúp lưu trữ vĩnh viễn)
+                Tải file MP3 + ảnh bìa lưu vĩnh viễn sang Cloudflare R2 (Khuyên dùng)
               </label>
             </div>
 
@@ -875,16 +924,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               ) : (
                 <Sparkles className="w-4 h-4 stroke-[3]" />
               )}
-              <span>{isSyncingSpotflow ? 'Đang đồng bộ...' : 'Kết nối & Đồng bộ ngay'}</span>
+              <span>{isSyncingSpotflow ? 'Đang đồng bộ từ SpotFlow...' : 'Đồng bộ ngay từ SpotFlow'}</span>
             </button>
           </div>
 
-          <div className="border-t border-[#1e2a54] pt-4 text-xs text-[#8d99be] space-y-1">
-            <p className="font-semibold text-[#f7f5f0]">Webhook Receiver Endpoint cho SpotFlow:</p>
-            <p className="font-mono bg-[#0d142c] p-2 rounded text-[11px] text-[#f47b64]">
-              POST {window.location.origin}/api/webhooks/spotflow
+          <div className="border-t border-[#1e2a54] pt-4 text-xs text-[#8d99be] space-y-1.5">
+            <p className="font-semibold text-[#f7f5f0]">Webhook Receiver Endpoint cho SpotFlow (Tự động đẩy khi tải xong):</p>
+            <p className="font-mono bg-[#0d142c] p-2.5 rounded-lg text-[11px] text-[#f47b64] select-all border border-[#222f5e]">
+              {window.location.origin}/api/webhooks/spotflow
             </p>
-            <p>Bạn có thể cấu hình SpotFlow tự động POST bài hát mới hoàn thành vào webhook này.</p>
+            <p>
+              Hỗ trợ sự kiện <code className="text-[#f7f5f0]">track_downloaded</code> và tự động trả về HTTP 200 với <code className="text-[#f7f5f0]">ping_test</code>. Cấu hình biến <code className="text-[#f47b64]">SPOTFLOW_WEBHOOK_SECRET</code> trên server/Vercel để xác thực header <code className="text-[#f7f5f0]">X-API-Key</code>.
+            </p>
           </div>
         </div>
       )}

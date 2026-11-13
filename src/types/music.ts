@@ -19,6 +19,11 @@ export interface Track {
   plays?: number;
   aiClassified?: boolean;
   aiReason?: string;
+  spotifyTrackId?: string;
+  spotifyUrl?: string;
+  syncedLyrics?: string;
+  plainLyrics?: string;
+  lyricsMode?: 'synced' | 'plain' | 'none';
 }
 
 export interface Playlist {

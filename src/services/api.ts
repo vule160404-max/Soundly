@@ -46,19 +46,103 @@ function saveLocalCustomTracks(tracks: Track[]) {
   }
 }
 
+const ALLOWED_FIRESTORE_TRACK_KEYS: Array<keyof Track> = [
+  'id',
+  'title',
+  'artist',
+  'album',
+  'coverUrl',
+  'audioUrl',
+  'duration',
+  'genre',
+  'releaseYear',
+  'lyrics',
+  'bpm',
+  'mood',
+  'plays',
+  'aiClassified',
+  'aiReason',
+  'spotifyTrackId',
+  'spotifyUrl',
+  'syncedLyrics',
+  'plainLyrics',
+  'lyricsMode',
+];
+
+function sanitizeTrackForFirestore(track: Track): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    id: String(track.id || `track-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128),
+    title: String(track.title || 'Bài hát không tên').slice(0, 300),
+    artist: String(track.artist || 'Nghệ sĩ chưa rõ').slice(0, 300),
+    audioUrl: String(track.audioUrl || '').slice(0, 2000),
+    genre: String(track.genre || 'Pop').slice(0, 100),
+  };
+
+  if (track.album !== undefined) out.album = String(track.album).slice(0, 300);
+  if (track.coverUrl !== undefined) out.coverUrl = String(track.coverUrl).slice(0, 2000);
+  if (typeof track.duration === 'number' && Number.isFinite(track.duration)) {
+    out.duration = Math.max(0, Math.round(track.duration));
+  }
+  if (typeof track.releaseYear === 'number' && Number.isFinite(track.releaseYear)) {
+    out.releaseYear = track.releaseYear;
+  }
+  if (Array.isArray(track.lyrics)) {
+    out.lyrics = track.lyrics.slice(0, 500).map(l => ({
+      time: Number.isFinite(l.time) ? l.time : 0,
+      text: String(l.text || '').slice(0, 500),
+    }));
+  }
+  if (typeof track.bpm === 'number' && Number.isFinite(track.bpm)) out.bpm = track.bpm;
+  if (track.mood !== undefined) out.mood = String(track.mood).slice(0, 150);
+  if (typeof track.plays === 'number' && Number.isFinite(track.plays)) out.plays = track.plays;
+  if (typeof track.aiClassified === 'boolean') out.aiClassified = track.aiClassified;
+  if (track.aiReason !== undefined) out.aiReason = String(track.aiReason).slice(0, 500);
+  if (track.spotifyTrackId) out.spotifyTrackId = String(track.spotifyTrackId).slice(0, 128);
+  if (track.spotifyUrl) out.spotifyUrl = String(track.spotifyUrl).slice(0, 500);
+  if (track.syncedLyrics) out.syncedLyrics = String(track.syncedLyrics).slice(0, 50000);
+  if (track.plainLyrics) out.plainLyrics = String(track.plainLyrics).slice(0, 50000);
+  if (track.lyricsMode === 'synced' || track.lyricsMode === 'plain' || track.lyricsMode === 'none') {
+    out.lyricsMode = track.lyricsMode;
+  }
+
+  for (const key of Object.keys(out)) {
+    if (!ALLOWED_FIRESTORE_TRACK_KEYS.includes(key as keyof Track)) {
+      delete out[key];
+    }
+  }
+  return out;
+}
+
 export const musicApi = {
   async getTracks(search?: string, genre?: string): Promise<Track[]> {
     let allTracks: Track[] = [...INITIAL_TRACKS];
 
-    const existingIds = new Set(allTracks.map(t => t.id));
-    const existingUrls = new Set(allTracks.map(t => t.audioUrl).filter(Boolean));
+    const indexById = new Map<string, number>();
+    const existingUrls = new Set<string>();
+    allTracks.forEach((t, idx) => {
+      indexById.set(t.id, idx);
+      if (t.audioUrl) existingUrls.add(t.audioUrl);
+    });
 
     const mergeTracks = (incoming: Track[]) => {
       for (const t of incoming) {
         if (!t || !t.id) continue;
-        if (!existingIds.has(t.id) && (!t.audioUrl || !existingUrls.has(t.audioUrl))) {
+        const existingIdx = indexById.get(t.id);
+        if (existingIdx !== undefined) {
+          const prev = allTracks[existingIdx];
+          allTracks[existingIdx] = {
+            ...prev,
+            ...t,
+            syncedLyrics: t.syncedLyrics || prev.syncedLyrics,
+            plainLyrics: t.plainLyrics || prev.plainLyrics,
+            lyrics: t.lyrics && t.lyrics.length > 0 ? t.lyrics : prev.lyrics,
+            coverUrl: t.coverUrl || prev.coverUrl,
+          };
+          continue;
+        }
+        if (!t.audioUrl || !existingUrls.has(t.audioUrl)) {
           allTracks.unshift(t);
-          existingIds.add(t.id);
+          allTracks.forEach((item, idx) => indexById.set(item.id, idx));
           if (t.audioUrl) existingUrls.add(t.audioUrl);
         }
       }
@@ -262,7 +346,7 @@ export const musicApi = {
     // 2. Save to Firestore (Guarantees Vercel & cross-device persistence)
     for (const track of newTracks) {
       try {
-        await setDoc(doc(db, 'soundly_tracks', track.id), track);
+        await setDoc(doc(db, 'soundly_tracks', track.id), sanitizeTrackForFirestore(track));
       } catch (err) {
         console.warn('Could not save track to Firestore:', err);
       }
@@ -332,12 +416,51 @@ export const musicApi = {
   async syncSpotflowTracks(
     spotflowUrl: string,
     apiKey: string,
-    saveToR2: boolean = true
-  ): Promise<{ count: number; tracks: Track[] }> {
+    saveToR2: boolean = true,
+    existingTracks: Track[] = []
+  ): Promise<{
+    count: number;
+    addedCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    addedTracks: Track[];
+    updatedTracks: Track[];
+    tracks: Track[];
+  }> {
+    const existingHints = existingTracks
+      .filter(t => t && t.id && !INITIAL_TRACKS.some(it => it.id === t.id))
+      .map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        coverUrl: t.coverUrl,
+        audioUrl: t.audioUrl,
+        duration: t.duration,
+        genre: t.genre,
+        releaseYear: t.releaseYear,
+        bpm: t.bpm,
+        mood: t.mood,
+        plays: t.plays,
+        aiClassified: t.aiClassified,
+        aiReason: t.aiReason,
+        spotifyTrackId: t.spotifyTrackId,
+        spotifyUrl: t.spotifyUrl,
+        syncedLyrics: t.syncedLyrics,
+        plainLyrics: t.plainLyrics,
+        lyricsMode: t.lyricsMode,
+        lyrics: t.lyrics,
+      }));
+
     const res = await fetch('/api/spotflow/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ spotflowUrl, apiKey, saveToR2 }),
+      body: JSON.stringify({
+        spotflowUrl,
+        apiKey,
+        saveToR2,
+        existingTracks: existingHints,
+      }),
     });
 
     if (!isJsonResponse(res)) {
@@ -349,26 +472,42 @@ export const musicApi = {
       throw new Error(data.error || 'Đồng bộ SpotFlow MP3 thất bại.');
     }
 
-    const synced: Track[] = Array.isArray(data.tracks) ? data.tracks : [];
-    if (synced.length > 0) {
-      const currentLocal = getLocalCustomTracks();
-      const existingIds = new Set(currentLocal.map(t => t.id));
-      const merged = [
-        ...synced.filter(t => !existingIds.has(t.id)),
-        ...currentLocal,
-      ];
-      saveLocalCustomTracks(merged);
+    const addedTracks: Track[] = Array.isArray(data.addedTracks)
+      ? data.addedTracks
+      : Array.isArray(data.tracks)
+        ? data.tracks
+        : [];
+    const updatedTracks: Track[] = Array.isArray(data.updatedTracks)
+      ? data.updatedTracks
+      : [];
+    const changedTracks = [...addedTracks, ...updatedTracks];
 
-      for (const track of synced) {
+    if (changedTracks.length > 0) {
+      const currentLocal = getLocalCustomTracks();
+      const changedById = new Map(changedTracks.map(t => [t.id, t]));
+      const updatedLocal = currentLocal.map(t => changedById.get(t.id) || t);
+      const localIds = new Set(currentLocal.map(t => t.id));
+      const newLocal = addedTracks.filter(t => !localIds.has(t.id));
+      saveLocalCustomTracks([...newLocal, ...updatedLocal]);
+
+      for (const track of changedTracks) {
         try {
-          await setDoc(doc(db, 'soundly_tracks', track.id), track);
+          await setDoc(doc(db, 'soundly_tracks', track.id), sanitizeTrackForFirestore(track));
         } catch (err) {
           console.warn('Could not save synced SpotFlow track to Firestore:', err);
         }
       }
     }
 
-    return data;
+    return {
+      count: typeof data.addedCount === 'number' ? data.addedCount : addedTracks.length,
+      addedCount: typeof data.addedCount === 'number' ? data.addedCount : addedTracks.length,
+      updatedCount: typeof data.updatedCount === 'number' ? data.updatedCount : updatedTracks.length,
+      skippedCount: typeof data.skippedCount === 'number' ? data.skippedCount : 0,
+      addedTracks,
+      updatedTracks,
+      tracks: Array.isArray(data.tracks) ? data.tracks : changedTracks,
+    };
   },
 
   async getR2Status(): Promise<{

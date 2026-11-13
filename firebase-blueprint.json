@@ -59,7 +59,12 @@
         "mood": { "type": "string", "maxLength": 150 },
         "plays": { "type": "number" },
         "aiClassified": { "type": "boolean" },
-        "aiReason": { "type": "string", "maxLength": 500 }
+        "aiReason": { "type": "string", "maxLength": 500 },
+        "spotifyTrackId": { "type": "string", "maxLength": 128 },
+        "spotifyUrl": { "type": "string", "maxLength": 500 },
+        "syncedLyrics": { "type": "string", "maxLength": 50000 },
+        "plainLyrics": { "type": "string", "maxLength": 50000 },
+        "lyricsMode": { "type": "string", "maxLength": 20, "enum": ["synced", "plain", "none"] }
       },
       "required": ["id", "title", "artist", "audioUrl", "genre"]
     }

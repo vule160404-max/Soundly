@@ -32,10 +32,15 @@ export interface R2StoredTrack {
   plays?: number;
   aiClassified?: boolean;
   aiReason?: string;
+  spotifyTrackId?: string;
+  spotifyUrl?: string;
+  syncedLyrics?: string;
+  plainLyrics?: string;
+  lyricsMode?: 'synced' | 'plain' | 'none';
 }
 
 const CATALOG_OBJECT_KEY = 'catalog/tracks.json';
-const DEFAULT_COVER_URL =
+export const DEFAULT_COVER_URL =
   'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
 const AUDIO_EXT_REGEX = /\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i;
 
@@ -216,9 +221,10 @@ export async function uploadBufferToR2(
 
 export async function uploadRemoteUrlToR2(
   remoteUrl: string,
-  fallbackName: string
-): Promise<{ audioUrl: string; key: string; size: number }> {
-  const res = await fetch(remoteUrl);
+  fallbackName: string,
+  headers?: Record<string, string>
+): Promise<{ audioUrl: string; key: string; size: number; buffer: Buffer }> {
+  const res = await fetch(remoteUrl, headers ? { headers } : undefined);
   if (!res.ok) {
     throw new Error(
       `Không thể tải tệp âm thanh từ nguồn ngoài (HTTP ${res.status}).`
@@ -228,7 +234,73 @@ export async function uploadRemoteUrlToR2(
   const buffer = Buffer.from(arrayBuffer);
   const contentType = res.headers.get('content-type') || 'audio/mpeg';
 
-  return uploadBufferToR2(buffer, fallbackName, contentType);
+  const uploaded = await uploadBufferToR2(buffer, fallbackName, contentType);
+  return { ...uploaded, buffer };
+}
+
+export async function uploadImageBufferToR2(
+  buffer: Buffer,
+  originalFileName: string,
+  contentType: string
+): Promise<{ coverUrl: string; key: string; size: number }> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    const missing = getMissingR2EnvVars(cfg);
+    throw new Error(
+      `Cloudflare R2 chưa được cấu hình trong biến môi trường server (Thiếu: ${missing.join(', ')}).`
+    );
+  }
+
+  const client = getR2Client(cfg);
+  const cleanName = sanitizeFileName(originalFileName || 'cover.jpg');
+  const key = `covers/${Date.now()}-${cleanName}`;
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType || 'image/jpeg',
+    })
+  );
+
+  return {
+    coverUrl: buildR2PublicUrl(cfg, key),
+    key,
+    size: buffer.length,
+  };
+}
+
+export async function uploadRemoteImageToR2(
+  remoteUrl: string,
+  fallbackName: string
+): Promise<{ coverUrl: string; key: string; size: number }> {
+  const res = await fetch(remoteUrl);
+  if (!res.ok) {
+    throw new Error(
+      `Không thể tải ảnh bìa từ nguồn ngoài (HTTP ${res.status}).`
+    );
+  }
+  const contentType = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`Định dạng ảnh bìa không hợp lệ (${contentType}).`);
+  }
+  const arrayBuffer = await res.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length === 0) {
+    throw new Error('Ảnh bìa rỗng.');
+  }
+
+  const ext = contentType.includes('png')
+    ? 'png'
+    : contentType.includes('webp')
+      ? 'webp'
+      : 'jpg';
+  const nameWithExt = /\.(jpe?g|png|webp)$/i.test(fallbackName)
+    ? fallbackName
+    : `${fallbackName}.${ext}`;
+
+  return uploadImageBufferToR2(buffer, nameWithExt, contentType);
 }
 
 export async function deleteObjectFromR2(
@@ -247,7 +319,7 @@ export async function deleteObjectFromR2(
       key = parsed.pathname.replace(/^\/+/, '');
     }
 
-    if (!key.startsWith('tracks/')) {
+    if (!key.startsWith('tracks/') && !key.startsWith('covers/')) {
       return false;
     }
 
@@ -433,18 +505,18 @@ export async function upsertR2CatalogTracks(
   const client = getR2Client(cfg);
   const existing = await readR2CatalogManifest(client, cfg.bucketName);
 
-  const byId = new Map<string, R2StoredTrack>();
-  for (const t of existing) {
-    if (t.id) byId.set(t.id, t);
-  }
+  // Deduplicate incoming by id (keeping latest entry)
+  const dedupedIncoming: R2StoredTrack[] = [];
+  const seenIncoming = new Set<string>();
   for (const t of incomingTracks) {
-    if (t.id) byId.set(t.id, t);
+    if (!t.id || seenIncoming.has(t.id)) continue;
+    seenIncoming.add(t.id);
+    dedupedIncoming.push(t);
   }
 
-  // Keep newest incoming tracks first, then remaining existing tracks
-  const incomingIds = new Set(incomingTracks.map(t => t.id));
+  const incomingIds = new Set(dedupedIncoming.map(t => t.id));
   const merged = [
-    ...incomingTracks,
+    ...dedupedIncoming,
     ...existing.filter(t => !incomingIds.has(t.id)),
   ];
 
@@ -486,6 +558,9 @@ export async function deleteR2CatalogTrack(id: string): Promise<boolean> {
   }
   if (target?.audioUrl) {
     await deleteObjectFromR2(target.audioUrl);
+  }
+  if (target?.coverUrl) {
+    await deleteObjectFromR2(target.coverUrl);
   }
   return true;
 }

@@ -20,13 +20,19 @@ import {
   testR2Connection,
   createR2PresignedUploadUrl,
   uploadBufferToR2,
-  uploadRemoteUrlToR2,
   deleteObjectFromR2,
   getR2CatalogTracks,
   upsertR2CatalogTracks,
   updateR2CatalogTrack,
   deleteR2CatalogTrack,
 } from './server-r2';
+import crypto from 'node:crypto';
+import {
+  ExistingTrackLookup,
+  SpotflowIncomingItem,
+  ingestSpotflowTracks,
+  resolveSpotflowEndpoint,
+} from './api/_lib/spotflow';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -528,56 +534,39 @@ async function startServer() {
     res.json({ trackId: track.id, lyrics: track.lyrics || [] });
   });
 
-  // Helper to parse synced lyrics string into LyricLine[]
-  function parseSpotflowLyrics(syncedText?: string, plainText?: string): LyricLine[] {
-    if (syncedText && typeof syncedText === 'string') {
-      const lines = syncedText.split('\n');
-      const result: LyricLine[] = [];
-      const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]\s*(.*)/;
-      for (const line of lines) {
-        const match = line.match(regex);
-        if (match) {
-          const mins = parseInt(match[1], 10);
-          const secs = parseInt(match[2], 10);
-          const millisStr = match[3] || '0';
-          const millis = parseInt(millisStr.padEnd(3, '0').slice(0, 3), 10);
-          const time = mins * 60 + secs + millis / 1000;
-          const text = match[4].trim();
-          if (text) {
-            result.push({ time, text });
-          }
-        }
+  function applyIngestedTracksToMemory(added: Track[], updated: Track[]) {
+    for (const upd of updated) {
+      const idx = tracks.findIndex(t => t.id === upd.id);
+      if (idx !== -1) {
+        tracks[idx] = { ...tracks[idx], ...upd };
+      } else {
+        tracks.unshift(upd);
       }
-      if (result.length > 0) return result;
     }
-
-    if (plainText && typeof plainText === 'string') {
-      const lines = plainText.split('\n').filter(l => l.trim().length > 0);
-      return lines.map((l, idx) => ({ time: idx * 6, text: l.trim() }));
+    if (added.length > 0) {
+      const existingIds = new Set(tracks.map(t => t.id));
+      const newOnes = added.filter(t => !existingIds.has(t.id));
+      tracks.unshift(...newOnes);
     }
-
-    return [{ time: 5, text: 'Đang phát bản nhạc từ SpotFlow MP3' }];
+    persistTracks();
   }
 
   // POST /api/spotflow/sync - Sync tracks from SpotFlow MP3 external API
   app.post('/api/spotflow/sync', async (req, res) => {
     try {
-      const { spotflowUrl, apiKey, saveToR2 } = req.body;
+      const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = req.body || {};
       if (!spotflowUrl || !apiKey) {
         return res.status(400).json({ error: 'Vui lòng cung cấp URL của SpotFlow và API Key.' });
       }
 
-      const trimmedUrl = String(spotflowUrl).trim().replace(/\/+$/, '');
-      const withProtocol = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
-      const endpoint = withProtocol.toLowerCase().endsWith('/api/external/tracks')
-        ? withProtocol
-        : `${withProtocol}/api/external/tracks`;
+      const endpoint = resolveSpotflowEndpoint(String(spotflowUrl));
+      const trimmedKey = String(apiKey).trim();
 
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
-          'X-API-Key': String(apiKey).trim(),
-          'Authorization': `Bearer ${String(apiKey).trim()}`,
+          'X-API-Key': trimmedKey,
+          'Authorization': `Bearer ${trimmedKey}`,
           'Accept': 'application/json',
         },
       });
@@ -599,98 +588,61 @@ async function startServer() {
         });
       }
 
-      type SpotflowItem = {
-        jobId?: string;
-        title?: string;
-        artist?: string;
-        album?: string;
-        bitrate?: number;
-        downloadUrl?: string;
-        syncedLyrics?: string;
-        plainLyrics?: string;
-        downloadedAt?: string;
-        coverUrl?: string;
-      };
-
-      const data: SpotflowItem[] | null = Array.isArray(parsed)
-        ? (parsed as SpotflowItem[])
+      const data: SpotflowIncomingItem[] | null = Array.isArray(parsed)
+        ? (parsed as SpotflowIncomingItem[])
         : parsed && typeof parsed === 'object' && Array.isArray((parsed as { tracks?: unknown }).tracks)
-          ? (parsed as { tracks: SpotflowItem[] }).tracks
+          ? (parsed as { tracks: SpotflowIncomingItem[] }).tracks
           : parsed && typeof parsed === 'object' && Array.isArray((parsed as { data?: unknown }).data)
-            ? (parsed as { data: SpotflowItem[] }).data
+            ? (parsed as { data: SpotflowIncomingItem[] }).data
             : null;
 
       if (!data) {
         return res.status(400).json({ error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).' });
       }
 
-      const r2Config = loadR2Config();
-      const shouldSaveToR2 = isR2Configured(r2Config) && saveToR2 !== false;
+      const r2Configured = isR2Configured();
+      const r2Existing = r2Configured ? await getR2CatalogTracks() : [];
 
-      const syncedTracks: Track[] = await Promise.all(
-        data.map(async (item, idx) => {
-          const trackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
-          const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
-          let audioUrl = item.downloadUrl || '';
-          if (audioUrl && !/^https?:\/\//i.test(audioUrl)) {
-            try {
-              audioUrl = new URL(audioUrl, endpoint).toString();
-            } catch {
-              // keep original
-            }
+      const existingCombined: ExistingTrackLookup[] = [...r2Existing];
+      const seenIds = new Set(r2Existing.map(t => t.id));
+      for (const t of tracks) {
+        if (!INITIAL_TRACKS.some(it => it.id === t.id) && !seenIds.has(t.id)) {
+          existingCombined.push(t);
+          seenIds.add(t.id);
+        }
+      }
+      if (Array.isArray(clientHints)) {
+        for (const hint of clientHints as ExistingTrackLookup[]) {
+          if (hint && hint.id && !seenIds.has(hint.id)) {
+            existingCombined.push(hint);
+            seenIds.add(hint.id);
           }
-          let coverUrl = item.coverUrl || '';
-          if (coverUrl && !/^https?:\/\//i.test(coverUrl)) {
-            try {
-              coverUrl = new URL(coverUrl, endpoint).toString();
-            } catch {
-              // keep original
-            }
-          }
+        }
+      }
 
-          if (shouldSaveToR2 && audioUrl) {
-            try {
-              const r2Upload = await uploadRemoteUrlToR2(
-                audioUrl,
-                `${item.artist || 'artist'} - ${item.title || 'song'}.mp3`
-              );
-              audioUrl = r2Upload.audioUrl;
-            } catch (r2Err) {
-              console.warn('Could not mirror SpotFlow file to Cloudflare R2, using direct url:', r2Err);
-            }
-          }
+      const result = await ingestSpotflowTracks({
+        items: data,
+        baseEndpoint: endpoint,
+        apiKey: trimmedKey,
+        saveToR2: saveToR2 !== false,
+        existingTracks: existingCombined,
+        sourceLabel: 'SpotFlow MP3',
+      });
 
-          return {
-            id: trackId,
-            title: (item.title || 'Bài hát SpotFlow').trim(),
-            artist: (item.artist || 'Nghệ sĩ SpotFlow').trim(),
-            album: (item.album || 'SpotFlow MP3 Download').trim(),
-            audioUrl,
-            coverUrl:
-              coverUrl ||
-              'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-            duration: 210,
-            genre: 'Pop',
-            releaseYear: new Date().getFullYear(),
-            bpm: item.bitrate === 320 ? 120 : 110,
-            mood: 'Sôi động & Chất lượng cao',
-            aiClassified: true,
-            aiReason: shouldSaveToR2
-              ? 'Lưu trữ vĩnh viễn trên Cloudflare R2'
-              : `Đồng bộ tự động từ SpotFlow MP3 (${item.bitrate || 320}kbps)`,
-            lyrics,
-            plays: 0,
-          };
-        })
-      );
-
-      tracks.unshift(...syncedTracks);
-      persistTracks();
+      applyIngestedTracksToMemory(result.addedTracks as Track[], result.updatedTracks as Track[]);
+      if (result.tracks.length > 0 && r2Configured) {
+        await upsertR2CatalogTracks(result.tracks);
+      }
 
       res.json({
         success: true,
-        count: syncedTracks.length,
-        tracks: syncedTracks,
+        count: result.addedCount,
+        addedCount: result.addedCount,
+        updatedCount: result.updatedCount,
+        skippedCount: result.skippedCount,
+        addedTracks: result.addedTracks,
+        updatedTracks: result.updatedTracks,
+        tracks: result.tracks,
       });
     } catch (err: unknown) {
       console.error('Spotflow sync error:', err);
@@ -699,41 +651,90 @@ async function startServer() {
     }
   });
 
-  // POST /api/webhooks/spotflow - Webhook receiver for SpotFlow MP3 auto-push
-  app.post('/api/webhooks/spotflow', (req, res) => {
+  // GET & POST /api/webhooks/spotflow - Webhook receiver for SpotFlow MP3 auto-push
+  app.get('/api/webhooks/spotflow', (_req, res) => {
+    const configuredSecret = (process.env.SPOTFLOW_WEBHOOK_SECRET || process.env.SPOTFLOW_API_KEY || '').trim();
+    res.json({
+      status: 'ready',
+      endpoint: '/api/webhooks/spotflow',
+      webhookSecretConfigured: Boolean(configuredSecret),
+    });
+  });
+
+  app.post('/api/webhooks/spotflow', async (req, res) => {
     try {
-      const item = req.body;
-      if (!item || !item.downloadUrl || !item.title) {
+      const configuredSecret = (process.env.SPOTFLOW_WEBHOOK_SECRET || process.env.SPOTFLOW_API_KEY || '').trim();
+      const rawApiKey = String(req.headers['x-api-key'] || '').trim();
+      const authHeader = String(req.headers['authorization'] || '').trim();
+      const bearerKey = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+      const providedKey = rawApiKey || bearerKey;
+
+      if (configuredSecret) {
+        const a = Buffer.from(providedKey, 'utf8');
+        const b = Buffer.from(configuredSecret, 'utf8');
+        if (!providedKey || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+          return res.status(401).json({
+            error: 'Unauthorized: Header X-API-Key không khớp với secret cấu hình.',
+          });
+        }
+      }
+
+      const payload = req.body || {};
+      if (payload.event === 'ping_test' || payload.test === true) {
+        return res.status(200).json({
+          success: true,
+          ignored: true,
+          event: payload.event || 'ping_test',
+          message: 'SpotFlow webhook ping_test received.',
+        });
+      }
+
+      const trackItem: SpotflowIncomingItem | null =
+        payload.track && typeof payload.track === 'object'
+          ? payload.track
+          : payload.title || payload.downloadUrl
+            ? payload
+            : null;
+
+      if (!trackItem || (!trackItem.title && !trackItem.downloadUrl)) {
         return res.status(400).json({ error: 'Webhook payload không hợp lệ.' });
       }
 
-      const trackId = `spotflow-wh-${item.jobId || Date.now()}`;
-      const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
+      const r2Configured = isR2Configured();
+      const r2Existing = r2Configured ? await getR2CatalogTracks() : [];
+      const existingCombined: ExistingTrackLookup[] = [...r2Existing];
+      const seenIds = new Set(r2Existing.map(t => t.id));
+      for (const t of tracks) {
+        if (!INITIAL_TRACKS.some(it => it.id === t.id) && !seenIds.has(t.id)) {
+          existingCombined.push(t);
+          seenIds.add(t.id);
+        }
+      }
 
-      const newTrack: Track = {
-        id: trackId,
-        title: (item.title || 'Bài hát mới').trim(),
-        artist: (item.artist || 'Nghệ sĩ chưa rõ').trim(),
-        album: (item.album || 'SpotFlow Webhook').trim(),
-        audioUrl: item.downloadUrl,
-        coverUrl:
-          item.coverUrl ||
-          'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-        duration: 210,
-        genre: 'Pop',
-        releaseYear: new Date().getFullYear(),
-        bpm: 110,
-        mood: 'Tươi mới',
-        aiClassified: true,
-        aiReason: 'Đẩy tự động qua Webhook SpotFlow MP3',
-        lyrics,
-        plays: 0,
-      };
+      const result = await ingestSpotflowTracks({
+        items: [trackItem],
+        apiKey: providedKey || configuredSecret || undefined,
+        saveToR2: true,
+        existingTracks: existingCombined,
+        sourceLabel: 'Webhook SpotFlow',
+      });
 
-      tracks.unshift(newTrack);
-      persistTracks();
+      applyIngestedTracksToMemory(result.addedTracks as Track[], result.updatedTracks as Track[]);
+      if (result.tracks.length > 0 && r2Configured) {
+        await upsertR2CatalogTracks(result.tracks);
+      }
 
-      res.json({ success: true, trackId: newTrack.id });
+      const processedTrack = result.tracks[0] || null;
+
+      res.status(200).json({
+        success: true,
+        event: payload.event || 'track_downloaded',
+        addedCount: result.addedCount,
+        updatedCount: result.updatedCount,
+        skippedCount: result.skippedCount,
+        trackId: processedTrack?.id || null,
+        track: processedTrack,
+      });
     } catch (err) {
       console.error('Webhook error:', err);
       res.status(500).json({ error: 'Lỗi xử lý webhook' });
