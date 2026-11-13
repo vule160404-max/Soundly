@@ -3,7 +3,7 @@ import { Play, Pause, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3,
 import { Track, Playlist, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
-import { usePlayer } from '../context/PlayerContext';
+import { usePlayer, getAutoVibePlaylists } from '../context/PlayerContext';
 
 interface HomeViewProps {
   tracks: Track[];
@@ -34,7 +34,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
     userPlaylists,
     openAlbumPicker,
     openCreateAlbumModal,
+    playRandomShuffle,
   } = usePlayer();
+
+  const vibePlaylists = useMemo(() => getAutoVibePlaylists(tracks), [tracks]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -295,6 +298,65 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
             </section>
           )}
+
+          {/* Auto-Generated Mood & Vibe Albums Section */}
+          <section>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-[#f47b64]" />
+                  <span>Album tâm trạng & Vibe (Tự động phân loại)</span>
+                </h3>
+                <p className="text-xs text-[#a3aed0] mt-0.5">
+                  Nhạc chill, nhạc suy, vui vẻ yêu đời, lofi hay acoustic được tổng hợp tự động theo gu âm nhạc của bạn.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => playRandomShuffle(tracks)}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all shrink-0 self-start sm:self-auto"
+              >
+                <Play className="w-3.5 h-3.5 fill-[#070b1a]" />
+                <span>Phát ngẫu nhiên tất cả (Shuffle)</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3.5">
+              {vibePlaylists.map((vibe) => (
+                <div
+                  key={vibe.id}
+                  onClick={() => onSelectPlaylist(vibe)}
+                  role="button"
+                  tabIndex={0}
+                  className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between"
+                >
+                  <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 shadow-md bg-[#0d142c]">
+                    <img
+                      src={vibe.coverUrl}
+                      alt={vibe.title}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2.5">
+                      <span className="text-[11px] font-bold text-white bg-[#f47b64] px-2 py-0.5 rounded-full">
+                        {vibe.trackIds.length} bài
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-[#f7f5f0] truncate">
+                      {vibe.title}
+                    </h4>
+                    <p className="text-[11px] text-[#a3aed0] line-clamp-1 mt-0.5">
+                      {vibe.description}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
 
           {/* Personal Albums Section */}
           <section>

@@ -145,6 +145,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [defaultBatchGenre, setDefaultBatchGenre] = useState<string>('AUTO_AI');
   const [isReclassifyingCatalog, setIsReclassifyingCatalog] = useState<boolean>(false);
   const [autoSkipDuplicates, setAutoSkipDuplicates] = useState<boolean>(true);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
 
   // Fetch logged in users list from Firestore
   useEffect(() => {
@@ -647,6 +648,47 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       onConfirm: async () => {
         await musicApi.deleteTrack(trackId);
         onTracksUpdated(tracks.filter(t => t.id !== trackId));
+        setSelectedTrackIds(prev => prev.filter(id => id !== trackId));
+      },
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (selectedTrackIds.length === tracks.length) {
+      setSelectedTrackIds([]);
+    } else {
+      setSelectedTrackIds(tracks.map(t => t.id));
+    }
+  };
+
+  const handleToggleSelectTrack = (id: string) => {
+    setSelectedTrackIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleBatchDeleteTracks = () => {
+    if (selectedTrackIds.length === 0) return;
+    openConfirmDialog({
+      title: 'Xóa nhiều bài hát',
+      description: `Bạn chắc chắn muốn xóa ${selectedTrackIds.length} bài hát đã chọn khỏi kho nhạc Soundly?`,
+      highlight: `${selectedTrackIds.length} bài hát`,
+      confirmLabel: 'Xóa các bài đã chọn',
+      cancelLabel: 'Giữ lại',
+      tone: 'danger',
+      onConfirm: async () => {
+        for (const id of selectedTrackIds) {
+          try {
+            await musicApi.deleteTrack(id);
+          } catch (err) {
+            console.warn(`Failed to delete track ${id}:`, err);
+          }
+        }
+        const remaining = tracks.filter(t => !selectedTrackIds.includes(t.id));
+        onTracksUpdated(remaining);
+        setSelectedTrackIds([]);
+        setUploadSuccessToast(`Đã xóa thành công ${selectedTrackIds.length} bài hát khỏi hệ thống!`);
+        setTimeout(() => setUploadSuccessToast(null), 4000);
       },
     });
   };
@@ -1716,80 +1758,117 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-[#1e2a54]">
-              {tracks.map((t, idx) => {
-                const isCurrent = currentTrack?.id === t.id;
-                const isThisPlaying = isCurrent && isPlaying;
-                const hasExpiredUrl = isExpiredExternalTrack(t.audioUrl);
+            <div className="space-y-4">
+              {/* Select All & Batch Delete Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-[#0d142c] border border-[#222f5e] text-xs">
+                <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-[#f7f5f0]">
+                  <input
+                    type="checkbox"
+                    checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
+                    onChange={handleToggleSelectAll}
+                    className="w-4 h-4 rounded text-[#f47b64] accent-[#f47b64]"
+                  />
+                  <span>
+                    Chọn tất cả ({selectedTrackIds.length}/{tracks.length} bài đã chọn)
+                  </span>
+                </label>
 
-                return (
-                  <div
-                    key={t.id}
-                    className="py-3 flex items-center justify-between gap-3 text-xs hover:bg-[#1c2852]/70 px-2 rounded-lg transition-colors"
+                {selectedTrackIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleBatchDeleteTracks}
+                    className="px-4 py-1.5 rounded-full bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold flex items-center gap-1.5 transition-all shadow-sm"
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <span className="w-6 text-center text-xs font-mono text-[#6e7ba8]">
-                        {idx + 1}
-                      </span>
-                      <button
-                        onClick={() => {
-                          if (isCurrent) togglePlay();
-                          else playTrack(t, tracks);
-                        }}
-                        className="w-8 h-8 rounded-full bg-[#0d142c] hover:bg-[#f47b64] text-[#f7f5f0] hover:text-[#070b1a] flex items-center justify-center transition-colors shrink-0"
-                      >
-                        {isThisPlaying ? (
-                          <Pause className="w-3.5 h-3.5 fill-current" />
-                        ) : (
-                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                        )}
-                      </button>
-                      <img
-                        src={t.coverUrl}
-                        alt={t.title}
-                        referrerPolicy="no-referrer"
-                        className="w-10 h-10 rounded-md object-cover shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <p
-                          className={`font-bold truncate ${
-                            isCurrent ? 'text-[#f47b64]' : 'text-[#f7f5f0]'
-                          }`}
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Xóa {selectedTrackIds.length} bài đã chọn</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="divide-y divide-[#1e2a54]">
+                {tracks.map((t, idx) => {
+                  const isCurrent = currentTrack?.id === t.id;
+                  const isThisPlaying = isCurrent && isPlaying;
+                  const hasExpiredUrl = isExpiredExternalTrack(t.audioUrl);
+                  const isSelected = selectedTrackIds.includes(t.id);
+
+                  return (
+                    <div
+                      key={t.id}
+                      className={`py-3 flex items-center justify-between gap-3 text-xs hover:bg-[#1c2852]/70 px-2 rounded-lg transition-colors ${
+                        isSelected ? 'bg-[#1c2852]/90 border border-[#f47b64]/40' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectTrack(t.id)}
+                          className="w-4 h-4 rounded text-[#f47b64] accent-[#f47b64] shrink-0 cursor-pointer"
+                        />
+                        <span className="w-6 text-center text-xs font-mono text-[#6e7ba8]">
+                          {idx + 1}
+                        </span>
+                        <button
+                          onClick={() => {
+                            if (isCurrent) togglePlay();
+                            else playTrack(t, tracks);
+                          }}
+                          className="w-8 h-8 rounded-full bg-[#0d142c] hover:bg-[#f47b64] text-[#f7f5f0] hover:text-[#070b1a] flex items-center justify-center transition-colors shrink-0"
                         >
-                          {t.title}
-                        </p>
-                        <div className="flex items-center gap-1.5 text-[#a3aed0] text-[11px] truncate">
-                          <span>{t.artist}</span>
-                          <span>•</span>
-                          <span className="text-[#f47b64] font-semibold">{t.genre}</span>
-                          {t.aiClassified && (
-                            <Sparkles className="w-3 h-3 text-[#f47b64] inline shrink-0" />
+                          {isThisPlaying ? (
+                            <Pause className="w-3.5 h-3.5 fill-current" />
+                          ) : (
+                            <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
                           )}
-                          {hasExpiredUrl && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
-                              Chưa lưu R2
-                            </span>
-                          )}
+                        </button>
+                        <img
+                          src={t.coverUrl}
+                          alt={t.title}
+                          referrerPolicy="no-referrer"
+                          className="w-10 h-10 rounded-md object-cover shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p
+                            className={`font-bold truncate ${
+                              isCurrent ? 'text-[#f47b64]' : 'text-[#f7f5f0]'
+                            }`}
+                          >
+                            {t.title}
+                          </p>
+                          <div className="flex items-center gap-1.5 text-[#a3aed0] text-[11px] truncate">
+                            <span>{t.artist}</span>
+                            <span>•</span>
+                            <span className="text-[#f47b64] font-semibold">{t.genre}</span>
+                            {t.aiClassified && (
+                              <Sparkles className="w-3 h-3 text-[#f47b64] inline shrink-0" />
+                            )}
+                            {hasExpiredUrl && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
+                                Chưa lưu R2
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-[11px] font-mono text-[#8d99be]">
-                        {Math.floor(t.duration / 60)}:
-                        {(t.duration % 60).toString().padStart(2, '0')}
-                      </span>
-                      <button
-                        onClick={() => handleDeleteTrack(t.id, t.title)}
-                        className="p-2 text-[#8d99be] hover:text-rose-400 hover:bg-[#0d142c] rounded-lg transition-colors"
-                        title="Xóa bài hát khỏi hệ thống"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-[11px] font-mono text-[#8d99be]">
+                          {Math.floor(t.duration / 60)}:
+                          {(t.duration % 60).toString().padStart(2, '0')}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteTrack(t.id, t.title)}
+                          className="p-2 text-[#8d99be] hover:text-rose-400 hover:bg-[#0d142c] rounded-lg transition-colors"
+                          title="Xóa bài hát khỏi hệ thống"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

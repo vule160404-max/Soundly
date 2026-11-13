@@ -408,7 +408,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-8 h-8 rounded-xl overflow-hidden bg-[#f7f5f0] ring-1 ring-white/15 shrink-0">
               <img
-                src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+                src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
                 alt="Soundly Logo"
                 className="w-full h-full object-cover"
               />

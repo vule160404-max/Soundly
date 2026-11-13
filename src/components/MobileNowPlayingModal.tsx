@@ -203,6 +203,76 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
           </div>
         </div>
 
+        {/* Spotify-Style Live Synced Lyrics Card (Directly below track & scrubber) */}
+        {(() => {
+          const syncedLines = React.useMemo(() => {
+            if (!currentTrack) return [];
+            const raw = currentTrack.syncedLyrics || '';
+            if (!raw.trim()) {
+              return Array.isArray(currentTrack.lyrics) ? currentTrack.lyrics : [];
+            }
+            const parsed: { time: number; text: string }[] = [];
+            const lines = raw.split(/\r?\n/);
+            const tagRegex = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+            for (const rawLine of lines) {
+              const timestamps: number[] = [];
+              let match: RegExpExecArray | null;
+              tagRegex.lastIndex = 0;
+              while ((match = tagRegex.exec(rawLine)) !== null) {
+                const mins = parseInt(match[1], 10);
+                const secs = parseInt(match[2], 10);
+                const frac = parseInt((match[3] || '0').padEnd(3, '0').slice(0, 3), 10);
+                timestamps.push(mins * 60 + secs + frac / 1000);
+              }
+              if (timestamps.length > 0) {
+                const text = rawLine.replace(tagRegex, '').trim();
+                if (text) {
+                  for (const time of timestamps) parsed.push({ time, text });
+                }
+              }
+            }
+            parsed.sort((a, b) => a.time - b.time);
+            return parsed.length > 0 ? parsed : (Array.isArray(currentTrack.lyrics) ? currentTrack.lyrics : []);
+          }, [currentTrack]);
+
+          let activeLyricIdx = -1;
+          for (let i = syncedLines.length - 1; i >= 0; i--) {
+            if (currentTime >= syncedLines[i].time) {
+              activeLyricIdx = i;
+              break;
+            }
+          }
+
+          if (syncedLines.length === 0) return null;
+
+          return (
+            <div
+              onClick={() => setIsLyricsOpen(true)}
+              className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-[#1e2e63]/95 via-[#141f48]/95 to-[#0d142c]/95 border border-[#2b3b75] shadow-2xl cursor-pointer group active:scale-[0.98] transition-all relative overflow-hidden shrink-0"
+            >
+              <div className="absolute top-2.5 right-3 flex items-center gap-1.5 text-[10px] font-bold text-[#f47b64] bg-[#f47b64]/15 px-2 py-0.5 rounded-full">
+                <Mic2 className="w-3 h-3" />
+                <span>Lời trực tiếp (Spotify-style)</span>
+              </div>
+              <div className="space-y-1.5 text-center py-1">
+                {activeLyricIdx !== -1 && activeLyricIdx > 0 && (
+                  <p className="text-xs text-[#a3aed0] truncate transition-all opacity-80">
+                    {syncedLines[activeLyricIdx - 1].text}
+                  </p>
+                )}
+                <p className="text-sm sm:text-base font-extrabold text-[#f7f5f0] drop-shadow-md truncate py-0.5 transition-all text-[#f47b64]">
+                  {activeLyricIdx !== -1 ? syncedLines[activeLyricIdx].text : (syncedLines[0]?.text || 'Đang chuẩn bị lời bài hát...')}
+                </p>
+                {activeLyricIdx !== -1 && activeLyricIdx + 1 < syncedLines.length && (
+                  <p className="text-xs text-[#a3aed0] truncate transition-all opacity-80">
+                    {syncedLines[activeLyricIdx + 1].text}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Primary Playback Controls */}
         <div className="mt-3 flex items-center justify-between py-2">
           {/* Shuffle Toggle */}

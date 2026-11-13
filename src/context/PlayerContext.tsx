@@ -101,6 +101,7 @@ interface PlayerContextType {
 
   // Visualizer Frequency Data (0-255 array for canvas/bars)
   getAudioFrequencyData: () => Uint8Array | null;
+  playRandomShuffle: (allTracks: Track[]) => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -707,6 +708,66 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     playTrack(queue[prevIndex], queue);
   }, [queue, queueIndex, playTrack]);
 
+  const playRandomShuffle = useCallback((allTracks: Track[]) => {
+    if (!allTracks || allTracks.length === 0) return;
+    const shuffled = [...allTracks].sort(() => Math.random() - 0.5);
+    setIsShuffle(true);
+    playTrack(shuffled[0], shuffled);
+  }, [playTrack]);
+
+  // Media Session API for Lock Screen & Notification Center controls
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !currentTrack) return;
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title || 'Soundly Track',
+        artist: currentTrack.artist || 'Nghệ sĩ chưa rõ',
+        album: currentTrack.album || 'Soundly Music',
+        artwork: [
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '96x96', type: 'image/jpeg' },
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '128x128', type: 'image/jpeg' },
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '192x192', type: 'image/jpeg' },
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '256x256', type: 'image/jpeg' },
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '384x384', type: 'image/jpeg' },
+          { src: currentTrack.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER, sizes: '512x512', type: 'image/jpeg' },
+        ],
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (audioRef.current) {
+          audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+        }
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          setIsPlaying(false);
+        }
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => playPrevious());
+      navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined && audioRef.current) {
+          audioRef.current.currentTime = details.seekTime;
+          setCurrentTime(details.seekTime);
+        }
+      });
+    } catch (err) {
+      console.warn('MediaSession API warning:', err);
+    }
+  }, [currentTrack, playNext, playPrevious]);
+
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      } catch {
+        // ignore
+      }
+    }
+  }, [isPlaying]);
+
   const handleTrackEnd = useCallback(() => {
     if (repeatMode === 'one' && audioRef.current) {
       audioRef.current.currentTime = 0;
@@ -915,6 +976,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isAddTrackModalOpen,
         setIsAddTrackModalOpen,
         getAudioFrequencyData,
+        playRandomShuffle,
       }}
     >
       {children}
@@ -929,3 +991,75 @@ export const usePlayer = (): PlayerContextType => {
   }
   return context;
 };
+
+export function getAutoVibePlaylists(tracks: Track[]): Playlist[] {
+  const matchFilter = (t: Track, keywords: string[], genreName?: string) => {
+    const text = (t.title + ' ' + t.artist + ' ' + t.genre + ' ' + (t.mood || '')).toLowerCase();
+    if (genreName && t.genre.toLowerCase() === genreName.toLowerCase()) return true;
+    return keywords.some(kw => text.includes(kw.toLowerCase()));
+  };
+
+  const chillTracks = tracks.filter(t => matchFilter(t, ['chill', 'thư giãn', 'thanh bình', 'nhẹ nhàng', 'lo-fi'], 'Lo-Fi & Chill'));
+  const sadTracks = tracks.filter(t => matchFilter(t, ['buồn', 'suy', 'tâm trạng', 'hoài niệm', 'lãng mạn', 'cô đơn', 'ballad'], 'Ballad'));
+  const happyTracks = tracks.filter(t => matchFilter(t, ['vui', 'yêu đời', 'năng động', 'sôi động', 'sung', 'pop'], 'Pop'));
+  const lofiTracks = tracks.filter(t => matchFilter(t, ['lofi', 'study', 'beats', 'chill'], 'Lo-Fi & Chill'));
+  const acousticTracks = tracks.filter(t => matchFilter(t, ['acoustic', 'unplugged', 'cover', 'mộc'], 'Acoustic'));
+  const trendingTracks = [...tracks].sort((a, b) => (Number(b.plays) || 0) - (Number(a.plays) || 0)).slice(0, 20);
+
+  return [
+    {
+      id: 'vibe-chill',
+      title: 'Chill & Thư giãn',
+      description: 'Những giai điệu nhẹ nhàng giúp bạn thả lỏng tâm hồn và tận hưởng không gian yên bình.',
+      coverUrl: chillTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
+      trackIds: chillTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+    {
+      id: 'vibe-sad',
+      title: 'Nhạc Suy & Tâm Trạng',
+      description: 'Giai điệu sâu lắng, đượm buồn dành cho những khoảnh khắc nội tâm và hoài niệm.',
+      coverUrl: sadTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+      trackIds: sadTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+    {
+      id: 'vibe-happy',
+      title: 'Vui Vẻ & Yêu Đời',
+      description: 'Bừng sáng năng lượng tích cực, giai điệu tươi vui cho một ngày mới tràn đầy sức sống.',
+      coverUrl: happyTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=600&auto=format&fit=crop&q=80',
+      trackIds: happyTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+    {
+      id: 'vibe-lofi',
+      title: 'Lo-Fi & Study Beats',
+      description: 'Âm thanh beat lo-fi êm dịu hỗ trợ tập trung học tập, làm việc và sáng tạo.',
+      coverUrl: lofiTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
+      trackIds: lofiTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+    {
+      id: 'vibe-acoustic',
+      title: 'Acoustic Mộc Mạc',
+      description: 'Tiếng đàn guitar mộc mạc cùng giọng ca tự sự chân thực chạm đến cảm xúc.',
+      coverUrl: acousticTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=600&auto=format&fit=crop&q=80',
+      trackIds: acousticTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+    {
+      id: 'vibe-trending',
+      title: 'Top Thịnh Hành (Trending)',
+      description: 'Những bản nhạc được nghe nhiều nhất trên hệ thống Soundly hiện tại.',
+      coverUrl: trendingTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
+      trackIds: trendingTracks.map(t => t.id),
+      isCustom: false,
+      createdAt: 'Tự động tạo bởi AI',
+    },
+  ];
+}

@@ -35,7 +35,7 @@ export const LoginModal: React.FC = () => {
         <div className="flex flex-col items-center text-center mb-8">
           <div className="w-16 h-16 rounded-2xl overflow-hidden bg-[#f7f5f0] mb-4 shadow-xl shadow-[#0c1957]/50 ring-2 ring-[#f47b64]/35">
             <img
-              src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+              src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
               alt="Soundly Logo"
               className="w-full h-full object-cover"
             />

@@ -227,24 +227,44 @@ export function fallbackClassify(
     if (
       lower.includes('rap') ||
       lower.includes('hiphop') ||
-      lower.includes('trap')
+      lower.includes('trap') ||
+      lower.includes('đọc rap')
     ) {
       genre = 'Hip-Hop';
     } else if (
       lower.includes('lofi') ||
       lower.includes('chill') ||
-      lower.includes('sleep')
+      lower.includes('sleep') ||
+      lower.includes('thư giãn') ||
+      lower.includes('nhẹ nhàng')
     ) {
       genre = 'Lo-Fi & Chill';
-    } else if (lower.includes('ballad') || lower.includes('acoustic') || lower.includes('lệ quyên') || lower.includes('bằng kiều')) {
+    } else if (
+      lower.includes('ballad') ||
+      lower.includes('acoustic') ||
+      lower.includes('lệ quyên') ||
+      lower.includes('bằng kiều') ||
+      lower.includes('quang lê') ||
+      lower.includes('buitruonglinh') ||
+      lower.includes('buồn') ||
+      lower.includes('suy') ||
+      lower.includes('tình lỡ') ||
+      lower.includes('đau') ||
+      lower.includes('khóc') ||
+      lower.includes('mưa') ||
+      lower.includes('đêm') ||
+      lower.includes('nhớ') ||
+      lower.includes('tự sự')
+    ) {
       genre = 'Ballad';
-    } else if (lower.includes('rock') || lower.includes('metal')) {
+    } else if (lower.includes('rock') || lower.includes('metal') || lower.includes('guitar điện')) {
       genre = 'Rock';
     } else if (
       lower.includes('edm') ||
       lower.includes('remix') ||
       lower.includes('dance') ||
-      lower.includes('house')
+      lower.includes('house') ||
+      lower.includes('bass')
     ) {
       genre = 'EDM / Electronic';
     } else if (
@@ -255,10 +275,12 @@ export function fallbackClassify(
       genre = 'R&B';
     } else if (lower.includes('jazz')) {
       genre = 'Jazz';
-    } else if (lower.includes('classical') || lower.includes('piano')) {
+    } else if (lower.includes('classical') || lower.includes('piano') || lower.includes('không lời')) {
       genre = 'Classical';
-    } else if (lower.includes('indie') || lower.includes('folk')) {
+    } else if (lower.includes('indie') || lower.includes('folk') || lower.includes('underground')) {
       genre = 'Indie';
+    } else if (lower.includes('vpop') || lower.includes('nhạc trẻ')) {
+      genre = 'V-Pop';
     }
 
     return {

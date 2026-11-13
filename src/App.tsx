@@ -41,7 +41,7 @@ import { deduplicateTracksList } from './utils/trackDedupe';
 import { Loader2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
-  const { user, isLoading: isAuthLoading } = useAuth();
+  const { user, isAdmin, isLoading: isAuthLoading } = useAuth();
   const { userPlaylists } = usePlayer();
 
   const [currentView, setCurrentView] = useState<string>('home');
@@ -52,6 +52,41 @@ const MainContent: React.FC = () => {
   const [isSleepTimerOpen, setIsSleepTimerOpen] = useState<boolean>(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState<boolean>(false);
+
+  const touchStartXRef = useRef<number>(0);
+  const touchEndXRef = useRef<number>(0);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndXRef.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    const diff = touchStartXRef.current - touchEndXRef.current;
+    const threshold = 65;
+    if (Math.abs(diff) < threshold) return;
+
+    const tabs = ['home', 'explore', 'artists', 'liked', 'history', ...(isAdmin ? ['admin'] : [])];
+    const currentIndex = tabs.indexOf(currentView);
+    if (currentIndex === -1) return;
+
+    if (diff > 0) {
+      // Swiped left -> next tab
+      const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
+      setCurrentView(tabs[nextIndex]);
+      setSelectedPlaylistId(null);
+      setSelectedArtistId(null);
+    } else {
+      // Swiped right -> prev tab
+      const prevIndex = Math.max(0, currentIndex - 1);
+      setCurrentView(tabs[prevIndex]);
+      setSelectedPlaylistId(null);
+      setSelectedArtistId(null);
+    }
+  };
 
   // Full synchronized catalog state
   const [allTracks, setAllTracks] = useState<Track[]>(INITIAL_TRACKS);
@@ -186,7 +221,7 @@ const MainContent: React.FC = () => {
       <div className="h-screen w-screen bg-[#070b1a] flex flex-col items-center justify-center text-[#f7f5f0] select-none">
         <div className="w-16 h-16 rounded-2xl overflow-hidden bg-[#f7f5f0] mb-4 shadow-2xl shadow-[#f47b64]/20 ring-2 ring-[#f47b64]/40">
           <img
-            src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+            src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
             alt="Soundly Logo"
             className="w-full h-full object-cover"
           />
@@ -236,7 +271,10 @@ const MainContent: React.FC = () => {
         {/* SCROLLABLE VIEW CONTENT */}
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28 touch-pan-y"
         >
           {isLoading ? (
             <div className="flex items-center justify-center h-64 text-[#f47b64] gap-2">

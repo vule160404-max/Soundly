@@ -25,7 +25,7 @@ export const LoginGate: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#f7f5f0] shadow-lg shadow-[#0c1957]/40 ring-1 ring-white/15 shrink-0">
             <img
-              src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+              src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
               alt="Soundly Logo"
               className="w-full h-full object-cover"
             />
@@ -44,7 +44,7 @@ export const LoginGate: React.FC = () => {
         {/* Official Soundly Logo Only */}
         <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-3xl overflow-hidden bg-[#f7f5f0] mb-4 shadow-2xl shadow-[#0c1957]/60 ring-2 ring-[#f47b64]/30 hover:scale-[1.02] transition-transform">
           <img
-            src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+            src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
             alt="Soundly Logo"
             className="w-full h-full object-cover"
           />

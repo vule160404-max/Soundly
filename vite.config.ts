@@ -16,7 +16,7 @@ export default defineConfig(() => {
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
-          'assets/aistudio/Logo_Soundly_b8420ae4.svg',
+          'assets/aistudio/Logo_Soundly__2__5c576ab3.svg',
         ],
         manifest: {
           id: '/',
@@ -100,15 +100,10 @@ export default defineConfig(() => {
         enforce: 'post',
         transform(code, id) {
           if (id.includes('vite/dist/client/client.mjs')) {
-            return code
-              .replace(
-                /transport\.connect\(createHMRHandler\(handleMessage\)\);/g,
-                '/* HMR WebSocket disabled in middleware mode */'
-              )
-              .replace(
-                /reject\(\/\* @__PURE__ \*\/ new Error\("WebSocket closed without opened\."\)\);/g,
-                'resolve();'
-              );
+            return code.replace(
+              'const createWebSocketModuleRunnerTransport = (options) => {',
+              'const createWebSocketModuleRunnerTransport = () => ({ connect() {}, disconnect() {}, send() {} }); const _origCreateWebSocketTransport = (options) => {'
+            );
           }
           return null;
         },

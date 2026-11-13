@@ -78,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <div className="w-9 h-9 rounded-xl overflow-hidden bg-[#f7f5f0] shadow-md shadow-[#0c1957]/40 ring-1 ring-white/15 group-hover:scale-105 transition-transform shrink-0">
               <img
-                src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+                src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
                 alt="Soundly Logo"
                 className="w-full h-full object-cover"
               />
