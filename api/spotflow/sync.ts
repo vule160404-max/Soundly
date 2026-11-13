@@ -3,6 +3,7 @@ import {
   loadR2Config,
   isR2Configured,
   uploadRemoteUrlToR2,
+  upsertR2CatalogTracks,
 } from '../_lib/r2.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
@@ -157,7 +158,8 @@ export default async function handler(
 
     const syncedTracks = await Promise.all(
       items.map(async (item, idx) => {
-        const trackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
+        const rawTrackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
+        const trackId = rawTrackId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
         const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
         let audioUrl = resolveRemoteMediaUrl(item.downloadUrl || '', endpoint);
         const coverUrl = item.coverUrl
@@ -200,6 +202,10 @@ export default async function handler(
         };
       })
     );
+
+    if (syncedTracks.length > 0 && isR2Configured(r2Config)) {
+      await upsertR2CatalogTracks(syncedTracks);
+    }
 
     sendJson(res, 200, {
       success: true,

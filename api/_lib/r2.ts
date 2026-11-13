@@ -1,6 +1,8 @@
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
   HeadBucketCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
@@ -13,6 +15,29 @@ export interface R2Config {
   bucketName: string;
   publicDomain: string;
 }
+
+export interface R2StoredTrack {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  coverUrl: string;
+  audioUrl: string;
+  duration: number;
+  genre: string;
+  releaseYear: number;
+  lyrics: Array<{ time: number; text: string }>;
+  bpm?: number;
+  mood?: string;
+  plays?: number;
+  aiClassified?: boolean;
+  aiReason?: string;
+}
+
+const CATALOG_OBJECT_KEY = 'catalog/tracks.json';
+const DEFAULT_COVER_URL =
+  'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
+const AUDIO_EXT_REGEX = /\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i;
 
 function cleanEnvValue(value?: string): string {
   return (value || '').trim().replace(/^["']|["']$/g, '').trim();
@@ -242,4 +267,225 @@ export async function deleteObjectFromR2(
     );
     return false;
   }
+}
+
+function extractR2Key(audioUrlOrKey: string): string {
+  if (!audioUrlOrKey) return '';
+  if (
+    audioUrlOrKey.startsWith('http://') ||
+    audioUrlOrKey.startsWith('https://')
+  ) {
+    try {
+      return new URL(audioUrlOrKey).pathname.replace(/^\/+/, '');
+    } catch {
+      return '';
+    }
+  }
+  return audioUrlOrKey.replace(/^\/+/, '');
+}
+
+function parseTrackMetaFromKey(key: string): { title: string; artist: string } {
+  const fileName = key.split('/').pop() || key;
+  const withoutTimestamp = fileName.replace(/^\d{10,}-/, '');
+  const withoutExt = withoutTimestamp.replace(/\.[^/.]+$/, '');
+  const readable = withoutExt.replace(/_/g, ' ').trim();
+
+  if (readable.includes(' - ')) {
+    const parts = readable.split(' - ');
+    return {
+      artist: parts[0].trim() || 'Nghệ sĩ chưa rõ',
+      title: parts.slice(1).join(' - ').trim() || readable,
+    };
+  }
+  return {
+    artist: 'Nghệ sĩ chưa rõ',
+    title: readable || 'Bài hát trên R2',
+  };
+}
+
+async function readR2CatalogManifest(
+  client: S3Client,
+  bucketName: string
+): Promise<R2StoredTrack[]> {
+  try {
+    const res = await client.send(
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: CATALOG_OBJECT_KEY,
+      })
+    );
+    const text = await res.Body?.transformToString('utf-8');
+    if (!text) return [];
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as R2StoredTrack[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveR2CatalogTracks(
+  tracks: R2StoredTrack[]
+): Promise<boolean> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return false;
+
+  try {
+    const client = getR2Client(cfg);
+    await client.send(
+      new PutObjectCommand({
+        Bucket: cfg.bucketName,
+        Key: CATALOG_OBJECT_KEY,
+        Body: JSON.stringify(tracks, null, 2),
+        ContentType: 'application/json; charset=utf-8',
+      })
+    );
+    return true;
+  } catch (err) {
+    console.warn('[Cloudflare R2] Failed to save catalog manifest:', err);
+    return false;
+  }
+}
+
+export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return [];
+
+  try {
+    const client = getR2Client(cfg);
+    const manifestTracks = await readR2CatalogManifest(client, cfg.bucketName);
+
+    // Also scan tracks/ prefix in R2 to recover any audio files uploaded before manifest existed
+    const listedKeys: Array<{ key: string; lastModified?: Date }> = [];
+    let continuationToken: string | undefined;
+    do {
+      const listRes = await client.send(
+        new ListObjectsV2Command({
+          Bucket: cfg.bucketName,
+          Prefix: 'tracks/',
+          ContinuationToken: continuationToken,
+        })
+      );
+      for (const obj of listRes.Contents || []) {
+        if (obj.Key && AUDIO_EXT_REGEX.test(obj.Key)) {
+          listedKeys.push({
+            key: obj.Key,
+            lastModified: obj.LastModified,
+          });
+        }
+      }
+      continuationToken = listRes.IsTruncated
+        ? listRes.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
+
+    const knownKeys = new Set(
+      manifestTracks.map(t => extractR2Key(t.audioUrl)).filter(Boolean)
+    );
+    const knownUrls = new Set(
+      manifestTracks.map(t => t.audioUrl).filter(Boolean)
+    );
+
+    const recoveredTracks: R2StoredTrack[] = [];
+    for (const item of listedKeys.sort(
+      (a, b) =>
+        (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
+    )) {
+      const publicUrl = buildR2PublicUrl(cfg, item.key);
+      if (knownKeys.has(item.key) || knownUrls.has(publicUrl)) continue;
+      const meta = parseTrackMetaFromKey(item.key);
+      const safeId = `r2-${item.key
+        .replace(/^tracks\//, '')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 96)}`;
+      recoveredTracks.push({
+        id: safeId,
+        title: meta.title,
+        artist: meta.artist,
+        album: 'Kho nhạc Cloudflare R2',
+        audioUrl: publicUrl,
+        coverUrl: DEFAULT_COVER_URL,
+        duration: 210,
+        genre: 'Pop',
+        releaseYear:
+          item.lastModified?.getFullYear() || new Date().getFullYear(),
+        bpm: 110,
+        mood: 'Thư giãn',
+        aiClassified: false,
+        aiReason: 'Khôi phục tự động từ Cloudflare R2',
+        lyrics: [{ time: 5, text: `Đang phát: ${meta.title}` }],
+        plays: 0,
+      });
+    }
+
+    return [...manifestTracks, ...recoveredTracks];
+  } catch (err) {
+    console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
+    return [];
+  }
+}
+
+export async function upsertR2CatalogTracks(
+  incomingTracks: R2StoredTrack[]
+): Promise<R2StoredTrack[]> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return incomingTracks;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2CatalogManifest(client, cfg.bucketName);
+
+  const byId = new Map<string, R2StoredTrack>();
+  for (const t of existing) {
+    if (t.id) byId.set(t.id, t);
+  }
+  for (const t of incomingTracks) {
+    if (t.id) byId.set(t.id, t);
+  }
+
+  // Keep newest incoming tracks first, then remaining existing tracks
+  const incomingIds = new Set(incomingTracks.map(t => t.id));
+  const merged = [
+    ...incomingTracks,
+    ...existing.filter(t => !incomingIds.has(t.id)),
+  ];
+
+  await saveR2CatalogTracks(merged);
+  return merged;
+}
+
+export async function updateR2CatalogTrack(
+  id: string,
+  patch: Partial<R2StoredTrack>
+): Promise<R2StoredTrack | null> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return null;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2CatalogManifest(client, cfg.bucketName);
+  const idx = existing.findIndex(t => t.id === id);
+  if (idx === -1) return null;
+
+  existing[idx] = { ...existing[idx], ...patch };
+  await saveR2CatalogTracks(existing);
+  return existing[idx];
+}
+
+export async function deleteR2CatalogTrack(id: string): Promise<boolean> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return false;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2CatalogManifest(client, cfg.bucketName);
+  let target = existing.find(t => t.id === id);
+  const filtered = existing.filter(t => t.id !== id);
+  if (filtered.length !== existing.length) {
+    await saveR2CatalogTracks(filtered);
+  }
+  if (!target) {
+    const allR2 = await getR2CatalogTracks();
+    target = allR2.find(t => t.id === id);
+  }
+  if (target?.audioUrl) {
+    await deleteObjectFromR2(target.audioUrl);
+  }
+  return true;
 }

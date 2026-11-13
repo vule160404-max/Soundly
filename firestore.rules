@@ -27,6 +27,37 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidTrack(data) {
+      return data.keys().hasAll(['id', 'title', 'artist', 'audioUrl', 'genre']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'artist', 'album', 'coverUrl', 'audioUrl',
+          'duration', 'genre', 'releaseYear', 'lyrics', 'bpm', 'mood',
+          'plays', 'aiClassified', 'aiReason'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+        data.artist is string && data.artist.size() <= 300 &&
+        data.audioUrl is string && data.audioUrl.size() > 0 && data.audioUrl.size() <= 2000 &&
+        data.genre is string && data.genre.size() <= 100 &&
+        (!('album' in data) || (data.album is string && data.album.size() <= 300)) &&
+        (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 2000)) &&
+        (!('duration' in data) || (data.duration is number && data.duration >= 0)) &&
+        (!('releaseYear' in data) || (data.releaseYear is number)) &&
+        (!('lyrics' in data) || (data.lyrics is list && data.lyrics.size() <= 500)) &&
+        (!('bpm' in data) || (data.bpm is number)) &&
+        (!('mood' in data) || (data.mood is string && data.mood.size() <= 150)) &&
+        (!('plays' in data) || (data.plays is number)) &&
+        (!('aiClassified' in data) || (data.aiClassified is bool)) &&
+        (!('aiReason' in data) || (data.aiReason is string && data.aiReason.size() <= 500));
+    }
+
+    // Shared Music Catalog (readable by signed-in listeners, writable by verified admins)
+    match /soundly_tracks/{trackId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(trackId) && isValidTrack(request.resource.data);
+      allow delete: if isAdmin() && isValidId(trackId);
+    }
+
     // User Profile & Administration
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();

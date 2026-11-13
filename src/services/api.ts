@@ -50,7 +50,28 @@ export const musicApi = {
   async getTracks(search?: string, genre?: string): Promise<Track[]> {
     let allTracks: Track[] = [...INITIAL_TRACKS];
 
-    // 1. Load from Firestore (persistent across Vercel deployments & F5 refresh)
+    const existingIds = new Set(allTracks.map(t => t.id));
+    const existingUrls = new Set(allTracks.map(t => t.audioUrl).filter(Boolean));
+
+    const mergeTracks = (incoming: Track[]) => {
+      for (const t of incoming) {
+        if (!t || !t.id) continue;
+        if (!existingIds.has(t.id) && (!t.audioUrl || !existingUrls.has(t.audioUrl))) {
+          allTracks.unshift(t);
+          existingIds.add(t.id);
+          if (t.audioUrl) existingUrls.add(t.audioUrl);
+        }
+      }
+    };
+
+    // 1. Load from localStorage backup first (instant)
+    try {
+      mergeTracks(getLocalCustomTracks());
+    } catch {
+      // ignore
+    }
+
+    // 2. Load from Firestore (persistent across devices & deployments)
     try {
       const snap = await getDocs(collection(db, 'soundly_tracks'));
       const firestoreTracks: Track[] = [];
@@ -58,30 +79,31 @@ export const musicApi = {
         firestoreTracks.push(d.data() as Track);
       });
       if (firestoreTracks.length > 0) {
-        const existingIds = new Set(allTracks.map(t => t.id));
-        for (const t of firestoreTracks) {
-          if (!existingIds.has(t.id)) {
-            allTracks.unshift(t);
-            existingIds.add(t.id);
-          }
-        }
+        mergeTracks(firestoreTracks);
       }
     } catch (err) {
       console.warn('Could not fetch tracks from Firestore:', err);
     }
 
-    // 2. Load from localStorage backup
+    // 3. Load from R2 catalog & auto-discovered R2 tracks via /api/tracks
     try {
-      const localTracks = getLocalCustomTracks();
-      const existingIds = new Set(allTracks.map(t => t.id));
-      for (const t of localTracks) {
-        if (!existingIds.has(t.id)) {
-          allTracks.unshift(t);
-          existingIds.add(t.id);
+      const res = await fetch('/api/tracks');
+      if (res.ok && isJsonResponse(res)) {
+        const apiTracks = (await res.json()) as Track[];
+        if (Array.isArray(apiTracks) && apiTracks.length > 0) {
+          mergeTracks(apiTracks);
         }
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('Could not fetch tracks from R2 API:', err);
+    }
+
+    // Keep localStorage synced with merged cloud tracks
+    const customOnly = allTracks.filter(
+      t => !INITIAL_TRACKS.some(it => it.id === t.id)
+    );
+    if (customOnly.length > 0) {
+      saveLocalCustomTracks(customOnly);
     }
 
     // Filter by genre
@@ -246,12 +268,12 @@ export const musicApi = {
       }
     }
 
-    // 3. Try posting to backend API if available
+    // 3. Persist metadata to Cloudflare R2 catalog via /api/tracks/batch
     try {
       await fetch('/api/tracks/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks: tracksData }),
+        body: JSON.stringify({ tracks: newTracks }),
       });
     } catch {
       // ignore

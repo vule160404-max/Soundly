@@ -39,6 +39,29 @@
         "addedAt": { "type": "string" }
       },
       "required": ["trackId", "userId"]
+    },
+    "SoundlyTrack": {
+      "title": "SoundlyTrack",
+      "description": "A music track uploaded to Cloudflare R2 and published in the Soundly catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 300 },
+        "artist": { "type": "string", "maxLength": 300 },
+        "album": { "type": "string", "maxLength": 300 },
+        "coverUrl": { "type": "string", "maxLength": 2000 },
+        "audioUrl": { "type": "string", "maxLength": 2000 },
+        "duration": { "type": "number" },
+        "genre": { "type": "string", "maxLength": 100 },
+        "releaseYear": { "type": "number" },
+        "lyrics": { "type": "array" },
+        "bpm": { "type": "number" },
+        "mood": { "type": "string", "maxLength": 150 },
+        "plays": { "type": "number" },
+        "aiClassified": { "type": "boolean" },
+        "aiReason": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "title", "artist", "audioUrl", "genre"]
     }
   },
   "firestore": {
@@ -53,6 +76,10 @@
     "/users/{userId}/liked/{trackId}": {
       "schema": "UserLikedTrack",
       "description": "Tracks liked by the user"
+    },
+    "/soundly_tracks/{trackId}": {
+      "schema": "SoundlyTrack",
+      "description": "Shared music catalog stored in Firestore"
     }
   }
 }

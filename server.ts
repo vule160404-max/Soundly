@@ -22,6 +22,10 @@ import {
   uploadBufferToR2,
   uploadRemoteUrlToR2,
   deleteObjectFromR2,
+  getR2CatalogTracks,
+  upsertR2CatalogTracks,
+  updateR2CatalogTrack,
+  deleteR2CatalogTrack,
 } from './server-r2';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -317,9 +321,22 @@ async function startServer() {
     }
   });
 
-  app.get('/api/tracks', (req, res) => {
+  app.get('/api/tracks', async (req, res) => {
     const { q, genre } = req.query;
     let results = [...tracks];
+
+    if (isR2Configured()) {
+      const r2Tracks = await getR2CatalogTracks();
+      const existingIds = new Set(results.map(t => t.id));
+      const existingUrls = new Set(results.map(t => t.audioUrl));
+      for (const rt of r2Tracks) {
+        if (!existingIds.has(rt.id) && !existingUrls.has(rt.audioUrl)) {
+          results.push(rt);
+          existingIds.add(rt.id);
+          existingUrls.add(rt.audioUrl);
+        }
+      }
+    }
 
     if (genre && typeof genre === 'string' && genre !== 'all') {
       results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
@@ -420,18 +437,17 @@ async function startServer() {
 
     tracks.unshift(...addedTracks);
     persistTracks();
+    if (isR2Configured()) {
+      await upsertR2CatalogTracks(addedTracks);
+    }
     res.status(201).json({ count: addedTracks.length, tracks: addedTracks });
   });
 
-  app.patch('/api/tracks/:id', (req, res) => {
+  app.patch('/api/tracks/:id', async (req, res) => {
     const { id } = req.params;
     const idx = tracks.findIndex(t => t.id === id);
-    if (idx === -1) {
-      return res.status(404).json({ error: 'Track not found' });
-    }
     const { title, artist, genre, mood, bpm, aiClassified, aiReason, lyrics } = req.body;
-    tracks[idx] = {
-      ...tracks[idx],
+    const patch = {
       ...(title !== undefined ? { title } : {}),
       ...(artist !== undefined ? { artist } : {}),
       ...(genre !== undefined ? { genre } : {}),
@@ -441,20 +457,31 @@ async function startServer() {
       ...(aiReason !== undefined ? { aiReason } : {}),
       ...(lyrics !== undefined ? { lyrics } : {}),
     };
-    persistTracks();
-    res.json(tracks[idx]);
+
+    if (idx !== -1) {
+      tracks[idx] = { ...tracks[idx], ...patch };
+      persistTracks();
+    }
+
+    const r2Updated = isR2Configured() ? await updateR2CatalogTrack(id, patch) : null;
+    if (idx === -1 && !r2Updated) {
+      return res.status(404).json({ error: 'Track not found' });
+    }
+    res.json(idx !== -1 ? tracks[idx] : r2Updated);
   });
 
   app.delete('/api/tracks/:id', async (req, res) => {
     const { id } = req.params;
     const targetTrack = tracks.find(t => t.id === id);
-    if (!targetTrack) {
-      return res.status(404).json({ error: 'Track not found' });
+    if (targetTrack) {
+      tracks = tracks.filter(t => t.id !== id);
+      persistTracks();
+      if (targetTrack.audioUrl) {
+        await deleteObjectFromR2(targetTrack.audioUrl);
+      }
     }
-    tracks = tracks.filter(t => t.id !== id);
-    persistTracks();
-    if (targetTrack.audioUrl) {
-      await deleteObjectFromR2(targetTrack.audioUrl);
+    if (isR2Configured()) {
+      await deleteR2CatalogTrack(id);
     }
     res.json({ success: true, deletedId: id });
   });
