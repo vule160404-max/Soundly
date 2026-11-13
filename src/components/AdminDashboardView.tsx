@@ -322,19 +322,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setUploadProgressText(null);
 
     try {
+      let currentR2Configured = r2Status.isConfigured;
+      if (!currentR2Configured) {
+        const latestStatus = await musicApi.getR2Status();
+        setR2Status(latestStatus);
+        currentR2Configured = latestStatus.isConfigured;
+      }
+
+      if (!currentR2Configured) {
+        throw new Error(
+          'Cloudflare R2 chưa được cấu hình trên server nên không thể lưu file nhạc để phát trực tuyến. Hãy thiết lập biến môi trường R2 rồi thử lại.'
+        );
+      }
+
       const tracksPayload = [];
       for (let i = 0; i < stagedFiles.length; i++) {
         const item = stagedFiles[i];
-        let finalAudioUrl = item.objectUrl;
-
-        // Upload to Cloudflare R2 if configured
-        if (r2Status.isConfigured && item.file) {
-          setUploadProgressText(
-            `Đang tải lên Cloudflare R2 (${i + 1}/${stagedFiles.length}): ${item.title}...`
-          );
-          const r2Res = await musicApi.uploadAudioToR2(item.file);
-          finalAudioUrl = r2Res.audioUrl;
-        }
+        setUploadProgressText(
+          `Đang tải lên Cloudflare R2 (${i + 1}/${stagedFiles.length}): ${item.title}...`
+        );
+        const r2Res = await musicApi.uploadAudioToR2(item.file);
+        const finalAudioUrl = r2Res.audioUrl;
 
         tracksPayload.push({
           title: item.title.trim(),

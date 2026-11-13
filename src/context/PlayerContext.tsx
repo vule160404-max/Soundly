@@ -69,9 +69,8 @@ const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const streamFallbackTriedRef = useRef<boolean>(false);
+  const handleTrackEndRef = useRef<() => void>(() => {});
 
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -137,11 +136,26 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isVisualizerOpen, setIsVisualizerOpen] = useState(false);
   const [isAddTrackModalOpen, setIsAddTrackModalOpen] = useState(false);
 
-  // Initialize HTML5 Audio Element
+  function extractR2TrackKeyFromUrl(rawUrl: string): string | null {
+    if (!rawUrl) return null;
+    if (rawUrl.startsWith('/api/r2/stream')) return null;
+    try {
+      const parsed = new URL(rawUrl, window.location.origin);
+      if (parsed.pathname.includes('/api/r2/stream')) return null;
+      const cleanPath = parsed.pathname.replace(/^\/+/, '');
+      if (cleanPath.startsWith('tracks/')) return cleanPath;
+      const idx = cleanPath.indexOf('/tracks/');
+      if (idx !== -1) return cleanPath.slice(idx + 1);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Initialize HTML5 Audio Element (without crossOrigin='anonymous' so R2/CDN MP3s without GET CORS play cleanly)
   useEffect(() => {
     const audio = new Audio();
-    audio.crossOrigin = 'anonymous';
-    audio.preload = 'metadata';
+    audio.preload = 'auto';
     audioRef.current = audio;
 
     const handleTimeUpdate = () => {
@@ -149,17 +163,42 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration || 0);
+      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
       setAudioError(null);
     };
 
     const handleEnded = () => {
-      handleTrackEnd();
+      handleTrackEndRef.current();
     };
 
     const handleError = () => {
-      console.warn('Audio playback error on url:', audio.src);
-      setAudioError('Không thể nạp tệp âm thanh. Vui lòng kiểm tra kết nối.');
+      const currentSrc = audio.currentSrc || audio.src || '';
+      const r2Key = extractR2TrackKeyFromUrl(currentSrc);
+      if (r2Key && !streamFallbackTriedRef.current) {
+        streamFallbackTriedRef.current = true;
+        const fallbackSrc = `/api/r2/stream?key=${encodeURIComponent(r2Key)}`;
+        console.warn('Direct audio URL failed, retrying via R2 stream proxy:', currentSrc);
+        audio.src = fallbackSrc;
+        audio.load();
+        audio
+          .play()
+          .then(() => {
+            setIsPlaying(true);
+            setAudioError(null);
+          })
+          .catch(() => {
+            setAudioError('Không thể phát tệp âm thanh từ Cloudflare R2.');
+            setIsPlaying(false);
+          });
+        return;
+      }
+
+      console.warn('Audio playback error on url:', currentSrc);
+      if (currentSrc.startsWith('blob:')) {
+        setAudioError('File tạm trình duyệt đã hết hạn. Vui lòng cấu hình Cloudflare R2 và tải lên lại.');
+      } else {
+        setAudioError('Không thể nạp tệp âm thanh. Vui lòng kiểm tra kết nối hoặc Public URL của R2.');
+      }
       setIsPlaying(false);
     };
 
@@ -177,35 +216,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  // Web Audio API initialization for visualizer on user gesture
-  const initAudioAnalyser = () => {
-    if (!audioRef.current || analyserRef.current) return;
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      audioContextRef.current = ctx;
-
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 64;
-      analyser.smoothingTimeConstant = 0.8;
-      analyserRef.current = analyser;
-
-      const source = ctx.createMediaElementSource(audioRef.current);
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
-      sourceNodeRef.current = source;
-    } catch (e) {
-      // AudioContext might be blocked until user interacts, or already connected
-      console.debug('Web Audio Analyser init deferred:', e);
-    }
-  };
-
   const getAudioFrequencyData = useCallback((): Uint8Array | null => {
-    if (!analyserRef.current) return null;
-    const bufferLength = analyserRef.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    analyserRef.current.getByteFrequencyData(dataArray);
-    return dataArray;
+    return null;
   }, []);
 
   // Sync volume with audio element
@@ -277,14 +289,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Play a specific track
   const playTrack = useCallback((track: Track, newQueue?: Track[]) => {
     if (!audioRef.current) return;
-    initAudioAnalyser();
-
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
 
     setCurrentTrack(track);
     setAudioError(null);
+    setCurrentTime(0);
+    setDuration(track.duration || 0);
+    streamFallbackTriedRef.current = false;
 
     // If new queue provided, update queue
     if (newQueue && newQueue.length > 0) {
@@ -304,9 +314,28 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
     }
 
-    audioRef.current.src = track.audioUrl;
-    audioRef.current.currentTime = 0;
-    audioRef.current.play()
+    let playableUrl = (track.audioUrl || '').trim();
+    if (!playableUrl) {
+      setAudioError('Bài hát này chưa có đường dẫn âm thanh hợp lệ.');
+      setIsPlaying(false);
+      return;
+    }
+
+    // Never attempt direct playback against private S3 R2 API domain; route via stream proxy
+    if (playableUrl.includes('.r2.cloudflarestorage.com/')) {
+      const r2Key = extractR2TrackKeyFromUrl(playableUrl);
+      if (r2Key) {
+        playableUrl = `/api/r2/stream?key=${encodeURIComponent(r2Key)}`;
+        streamFallbackTriedRef.current = true;
+      }
+    }
+
+    const audio = audioRef.current;
+    audio.pause();
+    audio.src = playableUrl;
+    audio.load();
+    audio
+      .play()
       .then(() => {
         setIsPlaying(true);
       })
@@ -324,19 +353,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const togglePlay = () => {
     if (!audioRef.current || !currentTrack) return;
-    initAudioAnalyser();
-
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
 
     if (isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play()
-        .then(() => setIsPlaying(true))
-        .catch(err => console.warn('Play error:', err));
+      audioRef.current
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+          setAudioError(null);
+        })
+        .catch(err => {
+          console.warn('Play error:', err);
+          setAudioError('Trình duyệt không thể phát âm thanh. Nhấn lại hoặc kiểm tra tệp nhạc.');
+        });
     }
   };
 
@@ -420,14 +451,18 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     playTrack(queue[prevIndex], queue);
   }, [queue, queueIndex, playTrack]);
 
-  const handleTrackEnd = () => {
+  const handleTrackEnd = useCallback(() => {
     if (repeatMode === 'one' && audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play();
+      audioRef.current.play().catch(() => {});
     } else {
       playNext();
     }
-  };
+  }, [repeatMode, playNext]);
+
+  useEffect(() => {
+    handleTrackEndRef.current = handleTrackEnd;
+  }, [handleTrackEnd]);
 
   const addToQueue = (track: Track) => {
     setQueue(prev => [...prev, track]);

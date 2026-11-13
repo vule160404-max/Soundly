@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   HeadBucketCommand,
   DeleteObjectCommand,
@@ -155,7 +156,7 @@ export function buildR2PublicUrl(cfg: R2Config, key: string): string {
     const domain = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
     return `${domain}/${key}`;
   }
-  return `https://${cfg.bucketName}.${cfg.accountId}.r2.cloudflarestorage.com/${key}`;
+  return `/api/r2/stream?key=${encodeURIComponent(key)}`;
 }
 
 export async function createR2PresignedUploadUrl(
@@ -343,17 +344,138 @@ export async function deleteObjectFromR2(
 
 function extractR2Key(audioUrlOrKey: string): string {
   if (!audioUrlOrKey) return '';
+  if (audioUrlOrKey.startsWith('/api/r2/stream')) {
+    try {
+      const parsed = new URL(audioUrlOrKey, 'http://localhost');
+      return (parsed.searchParams.get('key') || '').replace(/^\/+/, '');
+    } catch {
+      return '';
+    }
+  }
   if (
     audioUrlOrKey.startsWith('http://') ||
     audioUrlOrKey.startsWith('https://')
   ) {
     try {
-      return new URL(audioUrlOrKey).pathname.replace(/^\/+/, '');
+      const parsed = new URL(audioUrlOrKey);
+      if (parsed.pathname.includes('/api/r2/stream')) {
+        return (parsed.searchParams.get('key') || '').replace(/^\/+/, '');
+      }
+      return parsed.pathname.replace(/^\/+/, '');
     } catch {
       return '';
     }
   }
   return audioUrlOrKey.replace(/^\/+/, '');
+}
+
+const MAX_STREAM_CHUNK_BYTES = 2 * 1024 * 1024; // 2MB per chunk stays safely under Vercel 4.5MB limit
+
+function inferMimeFromKey(key: string): string {
+  const lower = key.toLowerCase();
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'audio/mp4';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.opus')) return 'audio/opus';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+export async function getR2ObjectRange(
+  rawKey: string,
+  rangeHeader?: string
+): Promise<{
+  status: 200 | 206;
+  buffer: Buffer;
+  contentType: string;
+  totalSize: number;
+  start: number;
+  end: number;
+}> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    throw new Error('Cloudflare R2 chưa được cấu hình.');
+  }
+  const key = rawKey.replace(/^\/+/, '');
+  if (!key.startsWith('tracks/') && !key.startsWith('covers/')) {
+    throw new Error('Forbidden object key.');
+  }
+
+  const client = getR2Client(cfg);
+  const head = await client.send(
+    new HeadObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: key,
+    })
+  );
+
+  const totalSize = Number(head.ContentLength || 0);
+  const contentType =
+    head.ContentType && head.ContentType !== 'application/octet-stream'
+      ? head.ContentType
+      : inferMimeFromKey(key);
+
+  if (totalSize === 0) {
+    return {
+      status: 200,
+      buffer: Buffer.alloc(0),
+      contentType,
+      totalSize: 0,
+      start: 0,
+      end: 0,
+    };
+  }
+
+  let start = 0;
+  let end = Math.min(totalSize - 1, MAX_STREAM_CHUNK_BYTES - 1);
+  let isPartial = totalSize > MAX_STREAM_CHUNK_BYTES;
+
+  if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+    isPartial = true;
+    const [rawStart, rawEnd] = rangeHeader.replace(/^bytes=/, '').split('-');
+    if (rawStart === '' && rawEnd) {
+      const suffixLen = parseInt(rawEnd, 10);
+      start = Math.max(0, totalSize - (Number.isFinite(suffixLen) ? suffixLen : MAX_STREAM_CHUNK_BYTES));
+      end = totalSize - 1;
+    } else {
+      const parsedStart = parseInt(rawStart, 10);
+      start = Number.isFinite(parsedStart) && parsedStart >= 0 ? parsedStart : 0;
+      const parsedEnd = rawEnd ? parseInt(rawEnd, 10) : start + MAX_STREAM_CHUNK_BYTES - 1;
+      const clampedEnd = Number.isFinite(parsedEnd)
+        ? Math.min(totalSize - 1, parsedEnd)
+        : totalSize - 1;
+      end = Math.min(clampedEnd, start + MAX_STREAM_CHUNK_BYTES - 1);
+    }
+    if (start >= totalSize) {
+      start = Math.max(0, totalSize - 1);
+      end = totalSize - 1;
+    }
+  }
+
+  const getRes = await client.send(
+    new GetObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: key,
+      Range: `bytes=${start}-${end}`,
+    })
+  );
+
+  const bytes = await getRes.Body?.transformToByteArray();
+  const buffer = bytes ? Buffer.from(bytes) : Buffer.alloc(0);
+
+  return {
+    status: isPartial ? 206 : 200,
+    buffer,
+    contentType,
+    totalSize,
+    start,
+    end: start + Math.max(0, buffer.length - 1),
+  };
 }
 
 function parseTrackMetaFromKey(key: string): { title: string; artist: string } {
@@ -489,7 +611,20 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       });
     }
 
-    return [...manifestTracks, ...recoveredTracks];
+    const healedManifest = manifestTracks.map(t => {
+      const next = { ...t };
+      if (next.audioUrl && next.audioUrl.includes('.r2.cloudflarestorage.com/')) {
+        const k = extractR2Key(next.audioUrl);
+        if (k) next.audioUrl = buildR2PublicUrl(cfg, k);
+      }
+      if (next.coverUrl && next.coverUrl.includes('.r2.cloudflarestorage.com/')) {
+        const k = extractR2Key(next.coverUrl);
+        if (k) next.coverUrl = buildR2PublicUrl(cfg, k);
+      }
+      return next;
+    });
+
+    return [...healedManifest, ...recoveredTracks];
   } catch (err) {
     console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
     return [];

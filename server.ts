@@ -25,6 +25,7 @@ import {
   upsertR2CatalogTracks,
   updateR2CatalogTrack,
   deleteR2CatalogTrack,
+  getR2ObjectRange,
 } from './server-r2';
 import crypto from 'node:crypto';
 import {
@@ -324,6 +325,32 @@ async function startServer() {
       console.error('Cloudflare R2 upload error:', err);
       const message = err instanceof Error ? err.message : 'Tải tệp lên Cloudflare R2 thất bại.';
       res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/r2/stream - Byte-range stream proxy for R2 objects (tracks/ and covers/)
+  app.get('/api/r2/stream', async (req, res) => {
+    try {
+      const key = String(req.query.key || '').trim();
+      if (!key) {
+        return res.status(400).json({ error: 'Missing R2 object key' });
+      }
+      const rangeHeader = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+      const result = await getR2ObjectRange(key, rangeHeader);
+
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Content-Length', String(result.buffer.length));
+      if (result.status === 206) {
+        res.setHeader('Content-Range', `bytes ${result.start}-${result.end}/${result.totalSize}`);
+      }
+      res.status(result.status).send(result.buffer);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to stream R2 object';
+      const status = msg.includes('Forbidden') ? 403 : 404;
+      res.status(status).json({ error: msg });
     }
   });
 

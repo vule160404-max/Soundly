@@ -113,6 +113,35 @@ function sanitizeTrackForFirestore(track: Track): Record<string, unknown> {
   return out;
 }
 
+function inferAudioContentType(file: File): string {
+  if (file.type && file.type.startsWith('audio/')) {
+    return file.type;
+  }
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'audio/mp4';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.opus')) return 'audio/opus';
+  return 'audio/mpeg';
+}
+
+function normalizePlayableUrl(url?: string): string {
+  if (!url) return '';
+  if (url.includes('.r2.cloudflarestorage.com/')) {
+    try {
+      const key = new URL(url).pathname.replace(/^\/+/, '');
+      if (key.startsWith('tracks/') || key.startsWith('covers/')) {
+        return `/api/r2/stream?key=${encodeURIComponent(key)}`;
+      }
+    } catch {
+      return url;
+    }
+  }
+  return url;
+}
+
 export const musicApi = {
   async getTracks(search?: string, genre?: string): Promise<Track[]> {
     let allTracks: Track[] = [...INITIAL_TRACKS];
@@ -125,14 +154,20 @@ export const musicApi = {
     });
 
     const mergeTracks = (incoming: Track[]) => {
-      for (const t of incoming) {
-        if (!t || !t.id) continue;
+      for (const rawTrack of incoming) {
+        if (!rawTrack || !rawTrack.id) continue;
+        const t: Track = {
+          ...rawTrack,
+          audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
+          coverUrl: normalizePlayableUrl(rawTrack.coverUrl),
+        };
         const existingIdx = indexById.get(t.id);
         if (existingIdx !== undefined) {
           const prev = allTracks[existingIdx];
           allTracks[existingIdx] = {
             ...prev,
             ...t,
+            audioUrl: t.audioUrl && !t.audioUrl.startsWith('blob:') ? t.audioUrl : prev.audioUrl,
             syncedLyrics: t.syncedLyrics || prev.syncedLyrics,
             plainLyrics: t.plainLyrics || prev.plainLyrics,
             lyrics: t.lyrics && t.lyrics.length > 0 ? t.lyrics : prev.lyrics,
@@ -567,13 +602,14 @@ export const musicApi = {
   async uploadAudioToR2(
     file: File
   ): Promise<{ audioUrl: string; key: string; size: number }> {
+    const contentType = inferAudioContentType(file);
     // 1. Prefer direct Presigned URL upload to R2 (bypasses Vercel 4.5MB body limit)
     const presignRes = await fetch('/api/r2/presign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fileName: file.name,
-        contentType: file.type || 'audio/mpeg',
+        contentType,
       }),
     });
 
@@ -583,7 +619,7 @@ export const musicApi = {
         const putRes = await fetch(uploadUrl, {
           method: 'PUT',
           headers: {
-            'Content-Type': file.type || 'audio/mpeg',
+            'Content-Type': contentType,
           },
           body: file,
         });
