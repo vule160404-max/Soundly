@@ -600,22 +600,25 @@ export const musicApi = {
   },
 
   async uploadAudioToR2(
-    file: File
+    file: File,
+    onProgress?: (percent: number) => void
   ): Promise<{ audioUrl: string; key: string; size: number }> {
     const contentType = inferAudioContentType(file);
-    // 1. Prefer direct Presigned URL upload to R2 (bypasses Vercel 4.5MB body limit)
-    const presignRes = await fetch('/api/r2/presign', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: file.name,
-        contentType,
-      }),
-    });
+    onProgress?.(5);
 
-    if (presignRes.ok && isJsonResponse(presignRes)) {
-      const { uploadUrl, audioUrl, key } = await presignRes.json();
-      try {
+    // 1. Try direct Presigned URL PUT to R2 (fastest when R2 Bucket CORS allows PUT)
+    try {
+      const presignRes = await fetch('/api/r2/presign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType,
+        }),
+      });
+
+      if (presignRes.ok && isJsonResponse(presignRes)) {
+        const { uploadUrl, audioUrl, key } = await presignRes.json();
         const putRes = await fetch(uploadUrl, {
           method: 'PUT',
           headers: {
@@ -624,31 +627,59 @@ export const musicApi = {
           body: file,
         });
         if (putRes.ok) {
+          onProgress?.(100);
           return { audioUrl, key, size: file.size };
         }
-        // If small file and PUT failed (e.g. R2 CORS not configured), try server proxy
-        if (file.size <= 4 * 1024 * 1024) {
-          return await uploadViaServerProxy(file);
+      } else if (!presignRes.ok && isJsonResponse(presignRes)) {
+        const errData = await presignRes.json().catch(() => ({}));
+        if (presignRes.status === 400 && errData.error) {
+          throw new Error(errData.error);
         }
-        throw new Error(
-          `Upload trực tiếp lên R2 thất bại (HTTP ${putRes.status}). Hãy kiểm tra cấu hình CORS Policy trên Cloudflare R2 Bucket.`
-        );
-      } catch (err) {
-        if (file.size <= 4 * 1024 * 1024) {
-          return await uploadViaServerProxy(file);
-        }
-        throw err instanceof Error
-          ? err
-          : new Error(
-              'Không thể upload trực tiếp lên Cloudflare R2. Vui lòng kiểm tra CORS Policy trên Bucket R2.'
-            );
       }
+    } catch (err) {
+      // If R2 env config is missing on server, surface that immediately
+      if (
+        err instanceof Error &&
+        err.message.includes('Cloudflare R2 chưa được cấu hình')
+      ) {
+        throw err;
+      }
+      // Otherwise (e.g. R2 bucket CORS blocks cross-origin PUT -> TypeError: Failed to fetch),
+      // transparently fall back to Soundly's same-origin server relay below.
+      console.warn(
+        '[Upload] Direct R2 PUT unavailable, falling back to server relay:',
+        err
+      );
     }
 
-    // 2. Fallback to multipart server proxy for smaller files / local Express
-    return await uploadViaServerProxy(file);
+    // 2. Same-origin server relay fallback (bypasses R2 bucket CORS completely)
+    if (file.size <= 3.5 * 1024 * 1024) {
+      const res = await uploadViaServerProxy(file);
+      onProgress?.(100);
+      return res;
+    }
+
+    // 3. Chunked server relay for files > 3.5MB (2MB chunks stay safely under Vercel 4.5MB limit)
+    return await uploadChunkedViaServerProxy(file, contentType, onProgress);
   },
 };
+
+function formatUploadNetworkError(err: unknown, fallbackMessage: string): Error {
+  if (err instanceof Error) {
+    const msg = err.message || '';
+    if (
+      msg === 'Failed to fetch' ||
+      msg.includes('NetworkError') ||
+      msg.includes('Load failed')
+    ) {
+      return new Error(
+        'Không thể kết nối tới máy chủ Soundly để tải file nhạc lên. Vui lòng kiểm tra kết nối mạng hoặc thử lại.'
+      );
+    }
+    return err;
+  }
+  return new Error(fallbackMessage);
+}
 
 async function uploadViaServerProxy(
   file: File
@@ -656,10 +687,15 @@ async function uploadViaServerProxy(
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await fetch('/api/r2/upload', {
-    method: 'POST',
-    body: formData,
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/r2/upload', {
+      method: 'POST',
+      body: formData,
+    });
+  } catch (err) {
+    throw formatUploadNetworkError(err, 'Tải file âm thanh lên Cloudflare R2 thất bại.');
+  }
 
   if (!isJsonResponse(res)) {
     throw new Error('Máy chủ lưu trữ không phản hồi định dạng hợp lệ.');
@@ -671,4 +707,101 @@ async function uploadViaServerProxy(
   }
 
   return data;
+}
+
+async function uploadChunkedViaServerProxy(
+  file: File,
+  contentType: string,
+  onProgress?: (percent: number) => void
+): Promise<{ audioUrl: string; key: string; size: number }> {
+  const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB per chunk stays well under Vercel 4.5MB payload cap
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * CHUNK_SIZE;
+    const end = Math.min(file.size, start + CHUNK_SIZE);
+    const chunkBuffer = await file.slice(start, end).arrayBuffer();
+
+    let lastErr: unknown = null;
+    let uploadedChunk = false;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(
+          `/api/r2/upload-chunk?uploadId=${encodeURIComponent(uploadId)}&chunkIndex=${chunkIndex}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+            },
+            body: chunkBuffer,
+          }
+        );
+
+        if (!isJsonResponse(res)) {
+          throw new Error(
+            `Máy chủ lưu trữ không phản hồi định dạng hợp lệ (HTTP ${res.status}).`
+          );
+        }
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(
+            data.error || `Lỗi tải phần ${chunkIndex + 1}/${totalChunks} lên R2.`
+          );
+        }
+
+        uploadedChunk = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (!uploadedChunk) {
+      throw formatUploadNetworkError(
+        lastErr,
+        `Tải phần ${chunkIndex + 1}/${totalChunks} lên Cloudflare R2 thất bại.`
+      );
+    }
+
+    const pct = Math.min(92, Math.round(((chunkIndex + 1) / totalChunks) * 90));
+    onProgress?.(pct);
+  }
+
+  onProgress?.(95);
+
+  let completeRes: Response;
+  try {
+    completeRes = await fetch('/api/r2/complete-chunked', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uploadId,
+        totalChunks,
+        fileName: file.name,
+        contentType,
+      }),
+    });
+  } catch (err) {
+    throw formatUploadNetworkError(
+      err,
+      'Không thể ghép các phần tệp âm thanh trên Cloudflare R2.'
+    );
+  }
+
+  if (!isJsonResponse(completeRes)) {
+    throw new Error('Máy chủ không phản hồi định dạng hợp lệ khi hoàn tất tải lên.');
+  }
+
+  const completeData = await completeRes.json();
+  if (!completeRes.ok) {
+    throw new Error(
+      completeData.error || 'Không thể hoàn tất tải tệp lên Cloudflare R2.'
+    );
+  }
+
+  onProgress?.(100);
+  return completeData;
 }

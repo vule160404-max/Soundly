@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { X, Moon, Clock } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 
@@ -9,6 +9,15 @@ interface SleepTimerModalProps {
 
 export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({ isOpen, onClose }) => {
   const { sleepTimerRemaining, setSleepTimer } = usePlayer();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -37,75 +46,95 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({ isOpen, onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#050814]/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sleep-timer-title"
+      onClick={onClose}
+      className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop"
+    >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm bg-[#0d142c] rounded-2xl shadow-2xl border border-[#222f5e] p-6 text-[#f7f5f0] animate-in fade-in zoom-in-95"
+        className="w-full max-w-[400px] bg-[#0e1633]/95 backdrop-blur-xl rounded-3xl ring-1 ring-white/10 shadow-[0_24px_64px_-12px_rgba(3,7,22,0.9)] overflow-hidden text-[#f7f5f0] soundly-modal relative"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-[#1e2a54]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[#f47b64]/15 text-[#f47b64] flex items-center justify-center">
-              <Moon className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-[#f7f5f0]">Hẹn giờ tắt nhạc</h3>
-              <p className="text-xs text-[#a3aed0]">Dừng phát nhạc tự động</p>
-            </div>
-          </div>
+        <div className="pointer-events-none absolute -top-16 left-1/2 -translate-x-1/2 w-56 h-28 rounded-full bg-[#f47b64]/15 blur-3xl" />
 
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-full text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Current Timer Status */}
-        {sleepTimerRemaining && (
-          <div className="mt-4 p-3.5 rounded-xl bg-[#141d3d] border border-[#f47b64]/40 flex items-center justify-between">
-            <div className="flex items-center gap-2.5 text-xs text-[#f7f5f0]">
-              <Clock className="w-4 h-4 text-[#f47b64] animate-spin" style={{ animationDuration: '6s' }} />
+        <div className="relative p-6 space-y-5">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-[#f47b64]/12 ring-1 ring-[#f47b64]/25 text-[#f47b64] flex items-center justify-center shrink-0">
+                <Moon className="w-5 h-5" />
+              </div>
               <div>
-                <p className="font-bold text-[#f47b64]">Đang đếm ngược</p>
-                <p className="font-mono tabular-nums text-[11px] text-[#a3aed0]">
-                  Còn lại: {formatTimer(sleepTimerRemaining)}
+                <h3 id="sleep-timer-title" className="text-base font-bold text-[#f7f5f0]">
+                  Hẹn giờ tắt nhạc
+                </h3>
+                <p className="text-xs text-[#a3aed0] mt-0.5">
+                  Tự động dừng phát khi hết thời gian
                 </p>
               </div>
             </div>
 
             <button
-              onClick={handleCancel}
-              className="text-xs font-bold text-rose-400 hover:underline px-2 py-1"
+              type="button"
+              onClick={onClose}
+              aria-label="Đóng hộp thoại"
+              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors"
             >
-              Hủy
+              <X className="w-4 h-4" />
             </button>
           </div>
-        )}
 
-        {/* Preset Options */}
-        <div className="mt-4 space-y-2">
-          {timerOptions.map(opt => (
+          {/* Current Timer Status */}
+          {sleepTimerRemaining && (
+            <div className="p-3.5 rounded-2xl bg-[#f47b64]/12 ring-1 ring-[#f47b64]/30 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-xs">
+                <Clock className="w-4 h-4 text-[#f47b64] animate-spin shrink-0" style={{ animationDuration: '6s' }} />
+                <div>
+                  <p className="font-semibold text-[#f47b64]">Đang đếm ngược</p>
+                  <p className="font-mono tabular-nums text-xs text-[#f7f5f0] mt-0.5">
+                    Còn lại {formatTimer(sleepTimerRemaining)}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="min-h-[36px] px-3 rounded-xl text-xs font-semibold text-rose-300 hover:bg-rose-500/15 transition-colors shrink-0"
+              >
+                Hủy hẹn giờ
+              </button>
+            </div>
+          )}
+
+          {/* Preset Options */}
+          <div className="divide-y divide-white/[0.06] rounded-2xl bg-[#152046]/55 overflow-hidden">
+            {timerOptions.map((opt) => (
+              <button
+                key={opt.minutes}
+                type="button"
+                onClick={() => handleSelect(opt.minutes)}
+                className="w-full min-h-[48px] flex items-center justify-between px-4 py-3 hover:bg-white/[0.06] text-left text-sm font-semibold text-[#f7f5f0] transition-colors"
+              >
+                <span>{opt.label}</span>
+                <span className="text-xs text-[#a3aed0] font-mono tabular-nums">
+                  +{opt.minutes}m
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="pt-3 border-t border-white/[0.06] flex justify-end">
             <button
-              key={opt.minutes}
-              onClick={() => handleSelect(opt.minutes)}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-[#141d3d] hover:bg-[#1c2852] text-left text-xs font-bold text-[#f7f5f0] transition-all border border-[#222f5e] hover:border-[#f47b64]"
+              type="button"
+              onClick={onClose}
+              className="min-h-[44px] w-full sm:w-auto px-5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.11] text-xs sm:text-sm font-semibold text-[#d6ddf5] transition-colors"
             >
-              <span>{opt.label}</span>
-              <span className="text-[11px] text-[#a3aed0] font-mono">+{opt.minutes}m</span>
+              Đóng
             </button>
-          ))}
-        </div>
-
-        {/* Close */}
-        <div className="mt-6 pt-3 border-t border-[#1e2a54]">
-          <button
-            onClick={onClose}
-            className="w-full py-2.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] text-xs font-bold text-[#f7f5f0] transition-colors"
-          >
-            Đóng
-          </button>
+          </div>
         </div>
       </div>
     </div>

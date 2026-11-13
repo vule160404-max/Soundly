@@ -41,22 +41,22 @@ export const LoginGate: React.FC = () => {
 
       {/* Center Auth Card */}
       <main className="w-full max-w-md my-auto py-4 z-10 flex flex-col items-center text-center">
-        {/* Official Soundly Full Lockup */}
-        <div className="w-40 h-40 sm:w-44 sm:h-44 rounded-3xl overflow-hidden bg-[#f7f5f0] mb-5 shadow-2xl shadow-[#0c1957]/60 ring-2 ring-[#f47b64]/30 hover:scale-[1.02] transition-transform">
+        {/* Official Soundly Logo Only */}
+        <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-3xl overflow-hidden bg-[#f7f5f0] mb-4 shadow-2xl shadow-[#0c1957]/60 ring-2 ring-[#f47b64]/30 hover:scale-[1.02] transition-transform">
           <img
-            src="/assets/aistudio/Logo_Soundly__1__041291db.svg"
-            alt="Soundly - Âm nhạc của bạn, theo cách riêng"
+            src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+            alt="Soundly Logo"
             className="w-full h-full object-cover"
           />
         </div>
 
-        {/* Headlines */}
-        <h1 className="text-2xl sm:text-3xl font-black text-[#f7f5f0] tracking-tight">
-          Âm nhạc của bạn, theo cách riêng
+        {/* Brand Wordmark & Tagline */}
+        <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
+          Soundly
         </h1>
-        <p className="text-xs sm:text-sm text-[#a3aed0] mt-2.5 max-w-sm leading-relaxed">
-          Nghe nhạc hoàn toàn <span className="text-[#f47b64] font-bold">miễn phí</span> mỗi ngày. Đăng nhập bằng <span className="text-[#f7f5f0] font-semibold">Google</span> để mở kho nhạc Soundly, lưu bài hát yêu thích và đồng bộ playlist của riêng bạn.
-        </p>
+        <h2 className="text-sm sm:text-base font-semibold text-[#a3aed0] mt-1.5 tracking-tight">
+          Âm nhạc của bạn, theo cách riêng
+        </h2>
 
         {/* Error Notification */}
         {authError && (

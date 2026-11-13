@@ -6,6 +6,8 @@ import {
   ListObjectsV2Command,
   HeadBucketCommand,
   DeleteObjectCommand,
+  GetBucketCorsCommand,
+  PutBucketCorsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -108,6 +110,66 @@ export function getR2Client(config?: R2Config): S3Client {
   });
 }
 
+let corsConfiguredBucket: string | null = null;
+
+export async function ensureR2BucketCors(config?: R2Config): Promise<boolean> {
+  const cfg = config || loadR2Config();
+  if (!isR2Configured(cfg)) return false;
+  if (corsConfiguredBucket === cfg.bucketName) return true;
+
+  try {
+    const client = getR2Client(cfg);
+    try {
+      const existing = await client.send(
+        new GetBucketCorsCommand({ Bucket: cfg.bucketName })
+      );
+      const hasValidRule = (existing.CORSRules || []).some(rule => {
+        const origins = rule.AllowedOrigins || [];
+        const methods = (rule.AllowedMethods || []).map(m => m.toUpperCase());
+        return (
+          origins.includes('*') &&
+          methods.includes('PUT') &&
+          methods.includes('GET')
+        );
+      });
+      if (hasValidRule) {
+        corsConfiguredBucket = cfg.bucketName;
+        return true;
+      }
+    } catch {
+      // Bucket may not have CORS configured yet; proceed to set it
+    }
+
+    await client.send(
+      new PutBucketCorsCommand({
+        Bucket: cfg.bucketName,
+        CORSConfiguration: {
+          CORSRules: [
+            {
+              AllowedOrigins: ['*'],
+              AllowedMethods: ['GET', 'PUT', 'HEAD'],
+              AllowedHeaders: ['*'],
+              ExposeHeaders: [
+                'ETag',
+                'Content-Length',
+                'Content-Range',
+                'Accept-Ranges',
+              ],
+              MaxAgeSeconds: 3600,
+            },
+          ],
+        },
+      })
+    );
+    corsConfiguredBucket = cfg.bucketName;
+    return true;
+  } catch (err) {
+    // Non-fatal: R2 API tokens with Object-only permissions cannot edit bucket CORS
+    console.warn('[Cloudflare R2] Could not auto-configure bucket CORS:', err);
+    return false;
+  }
+}
+
 export async function testR2Connection(): Promise<{
   success: boolean;
   message: string;
@@ -128,6 +190,7 @@ export async function testR2Connection(): Promise<{
         Bucket: cfg.bucketName,
       })
     );
+    await ensureR2BucketCors(cfg);
     return {
       success: true,
       message: `Kết nối thành công tới Cloudflare R2 Bucket "${cfg.bucketName}"!`,
@@ -171,6 +234,7 @@ export async function createR2PresignedUploadUrl(
     );
   }
 
+  await ensureR2BucketCors(cfg);
   const client = getR2Client(cfg);
   const cleanName = sanitizeFileName(originalFileName || 'audio.mp3');
   const key = `tracks/${Date.now()}-${cleanName}`;
@@ -218,6 +282,122 @@ export async function uploadBufferToR2(
     key,
     size: buffer.length,
   };
+}
+
+function sanitizeUploadId(uploadId: string): string {
+  return uploadId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+}
+
+function buildTempChunkKey(safeUploadId: string, chunkIndex: number): string {
+  return `tmp-uploads/${safeUploadId}/part-${String(chunkIndex).padStart(5, '0')}`;
+}
+
+export async function uploadTempChunkToR2(
+  uploadId: string,
+  chunkIndex: number,
+  buffer: Buffer
+): Promise<{ key: string; size: number }> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    const missing = getMissingR2EnvVars(cfg);
+    throw new Error(
+      `Cloudflare R2 chưa được cấu hình trên server (Thiếu: ${missing.join(', ')}).`
+    );
+  }
+
+  const safeId = sanitizeUploadId(uploadId);
+  if (!safeId) {
+    throw new Error('uploadId không hợp lệ.');
+  }
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= 100) {
+    throw new Error('chunkIndex không hợp lệ.');
+  }
+  if (!buffer || buffer.length === 0) {
+    throw new Error('Dữ liệu chunk trống.');
+  }
+
+  const key = buildTempChunkKey(safeId, chunkIndex);
+  const client = getR2Client(cfg);
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: key,
+      Body: buffer,
+      ContentType: 'application/octet-stream',
+    })
+  );
+
+  return { key, size: buffer.length };
+}
+
+export async function completeChunkedUploadToR2(params: {
+  uploadId: string;
+  totalChunks: number;
+  fileName: string;
+  contentType: string;
+}): Promise<{ audioUrl: string; key: string; size: number }> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    const missing = getMissingR2EnvVars(cfg);
+    throw new Error(
+      `Cloudflare R2 chưa được cấu hình trên server (Thiếu: ${missing.join(', ')}).`
+    );
+  }
+
+  const safeId = sanitizeUploadId(params.uploadId || '');
+  const totalChunks = Number(params.totalChunks);
+  if (!safeId || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 40) {
+    throw new Error('Thông tin ghép file chunk không hợp lệ.');
+  }
+
+  const client = getR2Client(cfg);
+  const chunkKeys = Array.from({ length: totalChunks }, (_, idx) =>
+    buildTempChunkKey(safeId, idx)
+  );
+
+  try {
+    const partBuffers: Buffer[] = new Array(totalChunks);
+    const CONCURRENCY = 4;
+    for (let offset = 0; offset < chunkKeys.length; offset += CONCURRENCY) {
+      const batch = chunkKeys.slice(offset, offset + CONCURRENCY);
+      const fetched = await Promise.all(
+        batch.map(async (chunkKey, batchIdx) => {
+          const res = await client.send(
+            new GetObjectCommand({
+              Bucket: cfg.bucketName,
+              Key: chunkKey,
+            })
+          );
+          const bytes = await res.Body?.transformToByteArray();
+          if (!bytes || bytes.length === 0) {
+            throw new Error(`Thiếu dữ liệu phần #${offset + batchIdx + 1} trên R2.`);
+          }
+          return Buffer.from(bytes);
+        })
+      );
+      fetched.forEach((buf, batchIdx) => {
+        partBuffers[offset + batchIdx] = buf;
+      });
+    }
+
+    const combined = Buffer.concat(partBuffers);
+    return await uploadBufferToR2(
+      combined,
+      params.fileName || `track-${Date.now()}.mp3`,
+      params.contentType || 'audio/mpeg'
+    );
+  } finally {
+    await Promise.allSettled(
+      chunkKeys.map(chunkKey =>
+        client.send(
+          new DeleteObjectCommand({
+            Bucket: cfg.bucketName,
+            Key: chunkKey,
+          })
+        )
+      )
+    );
+  }
 }
 
 export async function uploadRemoteUrlToR2(
@@ -311,15 +491,7 @@ export async function deleteObjectFromR2(
   if (!isR2Configured(cfg)) return false;
 
   try {
-    let key = audioUrlOrKey;
-    if (
-      audioUrlOrKey.startsWith('http://') ||
-      audioUrlOrKey.startsWith('https://')
-    ) {
-      const parsed = new URL(audioUrlOrKey);
-      key = parsed.pathname.replace(/^\/+/, '');
-    }
-
+    const key = extractR2Key(audioUrlOrKey);
     if (!key.startsWith('tracks/') && !key.startsWith('covers/')) {
       return false;
     }

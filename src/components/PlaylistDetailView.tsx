@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Play, Pause, Shuffle, Music2, Trash2 } from 'lucide-react';
 import { Playlist, Track } from '../types/music';
 import { TrackTable } from './TrackTable';
@@ -22,10 +22,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     deletePlaylist,
     currentTrack,
     isPlaying,
-    togglePlay
+    togglePlay,
+    openConfirmDialog,
   } = usePlayer();
-
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   const playlistTracks = playlist.trackIds
     .map((id) => allTracks.find((t) => t.id === id))
@@ -53,9 +52,19 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     playTrack(playlistTracks[randomIdx], playlistTracks);
   };
 
-  const handleConfirmDelete = () => {
-    deletePlaylist(playlist.id);
-    onBackToHome();
+  const handleDelete = () => {
+    openConfirmDialog({
+      title: 'Xóa album khỏi thư viện',
+      description: 'Thao tác này sẽ xóa album cá nhân',
+      highlight: playlist.title,
+      confirmLabel: 'Xóa album',
+      cancelLabel: 'Giữ lại',
+      tone: 'danger',
+      onConfirm: () => {
+        deletePlaylist(playlist.id);
+        onBackToHome();
+      },
+    });
   };
 
   return (
@@ -120,34 +129,15 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         </div>
 
         {playlist.isCustom && (
-          isConfirmingDelete ? (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsConfirmingDelete(false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0] bg-[#141d3d]"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-500 hover:bg-rose-400 text-white"
-              >
-                Xác nhận xóa
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsConfirmingDelete(true)}
-              title="Xóa album này"
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>Xóa album</span>
-            </button>
-          )
+          <button
+            type="button"
+            onClick={handleDelete}
+            title="Xóa album này"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Xóa album</span>
+          </button>
         )}
       </div>
 

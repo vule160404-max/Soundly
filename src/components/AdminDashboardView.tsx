@@ -83,7 +83,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onTracksUpdated,
 }) => {
   const { user, isAdmin } = useAuth();
-  const { playTrack, currentTrack, isPlaying, togglePlay } = usePlayer();
+  const { playTrack, currentTrack, isPlaying, togglePlay, openConfirmDialog } = usePlayer();
 
   const [activeTab, setActiveTab] = useState<'upload' | 'users' | 'tracks' | 'spotflow' | 'r2'>('upload');
   const [usersList, setUsersList] = useState<UserProfileDoc[]>([]);
@@ -321,6 +321,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setUploadError(null);
     setUploadProgressText(null);
 
+    const addedTracksAll: Track[] = [];
+    const succeededIds = new Set<string>();
+
     try {
       let currentR2Configured = r2Status.isConfigured;
       if (!currentR2Configured) {
@@ -335,53 +338,69 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         );
       }
 
-      const tracksPayload = [];
-      for (let i = 0; i < stagedFiles.length; i++) {
+      const totalCount = stagedFiles.length;
+      for (let i = 0; i < totalCount; i++) {
         const item = stagedFiles[i];
         setUploadProgressText(
-          `Đang tải lên Cloudflare R2 (${i + 1}/${stagedFiles.length}): ${item.title}...`
+          `Đang tải lên Cloudflare R2 (${i + 1}/${totalCount}): ${item.title}...`
         );
-        const r2Res = await musicApi.uploadAudioToR2(item.file);
+        const r2Res = await musicApi.uploadAudioToR2(item.file, pct => {
+          setUploadProgressText(
+            `Đang tải lên Cloudflare R2 (${i + 1}/${totalCount}): ${item.title} (${pct}%)`
+          );
+        });
         const finalAudioUrl = r2Res.audioUrl;
 
-        tracksPayload.push({
-          title: item.title.trim(),
-          artist: item.artist.trim() || 'Nghệ sĩ chưa rõ',
-          album: item.album.trim(),
-          audioUrl: finalAudioUrl,
-          genre: item.genre,
-          duration: item.duration,
-          bpm: item.bpm,
-          mood: item.mood,
-          aiClassified: item.aiClassified,
-          aiReason:
-            item.aiReason ||
-            (finalAudioUrl.includes('r2.')
-              ? 'Lưu trữ trên Cloudflare R2 CDN'
-              : 'Tải lên bởi quản trị viên'),
-          lyricsText: item.lyricsText,
-          coverUrl:
-            'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-        });
+        setUploadProgressText(
+          `Đang lưu bài hát (${i + 1}/${totalCount}): ${item.title}...`
+        );
+        const [savedTrack] = await musicApi.addBatchTracks([
+          {
+            title: item.title.trim(),
+            artist: item.artist.trim() || 'Nghệ sĩ chưa rõ',
+            album: item.album.trim(),
+            audioUrl: finalAudioUrl,
+            genre: item.genre,
+            duration: item.duration,
+            bpm: item.bpm,
+            mood: item.mood,
+            aiClassified: item.aiClassified,
+            aiReason:
+              item.aiReason ||
+              (finalAudioUrl.includes('r2.') || finalAudioUrl.includes('/api/r2/stream')
+                ? 'Lưu trữ trên Cloudflare R2 CDN'
+                : 'Tải lên bởi quản trị viên'),
+            lyricsText: item.lyricsText,
+            coverUrl:
+              'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+          },
+        ]);
+
+        if (savedTrack) {
+          addedTracksAll.push(savedTrack);
+        }
+        succeededIds.add(item.id);
       }
 
-      setUploadProgressText('Đang ghi nhận bài hát vào cơ sở dữ liệu...');
-      const addedTracks = await musicApi.addBatchTracks(tracksPayload);
-      onTracksUpdated([...addedTracks, ...tracks]);
-
       setUploadSuccessToast(
-        r2Status.isConfigured
-          ? `Đã lưu thành công ${stagedFiles.length} bài hát lên Cloudflare R2 & kho nhạc Soundly!`
-          : `Đã tải lên thành công ${stagedFiles.length} bài hát vào kho Soundly!`
+        `Đã lưu thành công ${addedTracksAll.length} bài hát lên Cloudflare R2 & kho nhạc Soundly!`
       );
-      setStagedFiles([]);
-
       setTimeout(() => setUploadSuccessToast(null), 4000);
     } catch (err: unknown) {
       console.error(err);
       const msg = err instanceof Error ? err.message : 'Tải lên thất bại. Vui lòng thử lại.';
-      setUploadError(msg);
+      setUploadError(
+        addedTracksAll.length > 0
+          ? `Đã tải xong ${addedTracksAll.length} bài, nhưng gặp lỗi ở bài tiếp theo: ${msg}`
+          : msg
+      );
     } finally {
+      if (addedTracksAll.length > 0) {
+        onTracksUpdated([...addedTracksAll, ...tracks]);
+      }
+      if (succeededIds.size > 0) {
+        setStagedFiles(prev => prev.filter(item => !succeededIds.has(item.id)));
+      }
       setIsUploading(false);
       setUploadProgressText(null);
     }
@@ -433,11 +452,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
 
   // Delete a track from the catalog
-  const handleDeleteTrack = async (trackId: string, title: string) => {
-    if (confirm(`Xác nhận xóa bài hát "${title}" khỏi hệ thống?`)) {
-      await musicApi.deleteTrack(trackId);
-      onTracksUpdated(tracks.filter(t => t.id !== trackId));
-    }
+  const handleDeleteTrack = (trackId: string, title: string) => {
+    openConfirmDialog({
+      title: 'Xóa bài hát khỏi hệ thống',
+      description: 'Bài hát sẽ bị xóa khỏi kho nhạc Soundly. Bạn chắc chắn muốn xóa',
+      highlight: title,
+      confirmLabel: 'Xóa bài hát',
+      cancelLabel: 'Giữ lại',
+      tone: 'danger',
+      onConfirm: async () => {
+        await musicApi.deleteTrack(trackId);
+        onTracksUpdated(tracks.filter(t => t.id !== trackId));
+      },
+    });
   };
 
   // Sync tracks from SpotFlow MP3 API

@@ -20,6 +20,8 @@ import {
   testR2Connection,
   createR2PresignedUploadUrl,
   uploadBufferToR2,
+  uploadTempChunkToR2,
+  completeChunkedUploadToR2,
   deleteObjectFromR2,
   getR2CatalogTracks,
   upsertR2CatalogTracks,
@@ -324,6 +326,75 @@ async function startServer() {
     } catch (err: unknown) {
       console.error('Cloudflare R2 upload error:', err);
       const message = err instanceof Error ? err.message : 'Tải tệp lên Cloudflare R2 thất bại.';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/r2/upload-chunk - Upload <= 2MB raw binary chunk for large files bypassing CORS/body limits
+  app.post(
+    '/api/r2/upload-chunk',
+    express.raw({ type: '*/*', limit: '4mb' }),
+    async (req, res) => {
+      try {
+        const config = loadR2Config();
+        if (!isR2Configured(config)) {
+          const missing = getMissingR2EnvVars(config);
+          return res.status(400).json({
+            error: `Cloudflare R2 chưa đủ biến môi trường trên server. Thiếu: ${missing.join(', ')}`,
+          });
+        }
+
+        const uploadId = String(req.query.uploadId || '').trim();
+        const chunkIndex = Number.parseInt(String(req.query.chunkIndex ?? '-1'), 10);
+        const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+
+        if (!uploadId || !Number.isInteger(chunkIndex) || chunkIndex < 0) {
+          return res.status(400).json({ error: 'Thiếu uploadId hoặc chunkIndex hợp lệ.' });
+        }
+        if (buffer.length === 0) {
+          return res.status(400).json({ error: 'Dữ liệu chunk trống.' });
+        }
+
+        const result = await uploadTempChunkToR2(uploadId, chunkIndex, buffer);
+        res.json({ success: true, chunkIndex, ...result });
+      } catch (err: unknown) {
+        console.error('Cloudflare R2 chunk upload error:', err);
+        const message =
+          err instanceof Error ? err.message : 'Tải phần dữ liệu lên Cloudflare R2 thất bại.';
+        res.status(500).json({ error: message });
+      }
+    }
+  );
+
+  // POST /api/r2/complete-chunked - Assemble uploaded chunks into final audio track on R2
+  app.post('/api/r2/complete-chunked', async (req, res) => {
+    try {
+      const config = loadR2Config();
+      if (!isR2Configured(config)) {
+        const missing = getMissingR2EnvVars(config);
+        return res.status(400).json({
+          error: `Cloudflare R2 chưa đủ biến môi trường trên server. Thiếu: ${missing.join(', ')}`,
+        });
+      }
+
+      const { uploadId, totalChunks, fileName, contentType } = req.body || {};
+      const result = await completeChunkedUploadToR2({
+        uploadId: String(uploadId || ''),
+        totalChunks: Number(totalChunks),
+        fileName: String(fileName || `track-${Date.now()}.mp3`),
+        contentType: String(contentType || 'audio/mpeg'),
+      });
+
+      res.json({
+        success: true,
+        audioUrl: result.audioUrl,
+        key: result.key,
+        size: result.size,
+      });
+    } catch (err: unknown) {
+      console.error('Cloudflare R2 complete chunked error:', err);
+      const message =
+        err instanceof Error ? err.message : 'Không thể ghép tệp âm thanh trên Cloudflare R2.';
       res.status(500).json({ error: message });
     }
   });

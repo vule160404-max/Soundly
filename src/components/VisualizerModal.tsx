@@ -70,19 +70,33 @@ export const VisualizerModal: React.FC = () => {
     };
   }, [isVisualizerOpen, isPlaying, getAudioFrequencyData]);
 
+  useEffect(() => {
+    if (!isVisualizerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsVisualizerOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isVisualizerOpen, setIsVisualizerOpen]);
+
   if (!isVisualizerOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#050814]/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setIsVisualizerOpen(false)}
+      className="fixed inset-0 z-50 bg-[#040714]/82 backdrop-blur-md flex items-center justify-center p-4 soundly-backdrop"
+    >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl bg-[#0d142c] rounded-2xl shadow-2xl border border-[#222f5e] p-6 md:p-8 animate-in fade-in zoom-in-95 flex flex-col items-center text-center text-[#f7f5f0]"
+        className="w-full max-w-2xl bg-[#0e1633]/95 backdrop-blur-xl rounded-3xl shadow-[0_24px_64px_-12px_rgba(3,7,22,0.9)] ring-1 ring-white/10 p-6 md:p-8 soundly-modal flex flex-col items-center text-center text-[#f7f5f0]"
       >
         {/* Header */}
-        <div className="w-full flex items-center justify-between pb-4 border-b border-[#1e2a54] mb-6">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[#f47b64]/15 text-[#f47b64] flex items-center justify-center">
-              <Activity className="w-4 h-4" />
+        <div className="w-full flex items-center justify-between pb-4 border-b border-white/[0.06] mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-[#f47b64]/12 ring-1 ring-[#f47b64]/25 text-[#f47b64] flex items-center justify-center">
+              <Activity className="w-5 h-5" />
             </div>
             <div className="text-left">
               <h3 className="text-base font-bold text-[#f7f5f0]">Sóng âm thanh thời gian thực</h3>
@@ -91,8 +105,10 @@ export const VisualizerModal: React.FC = () => {
           </div>
 
           <button
+            type="button"
             onClick={() => setIsVisualizerOpen(false)}
-            className="p-1.5 rounded-full text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
+            aria-label="Đóng hộp thoại"
+            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

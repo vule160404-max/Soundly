@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Home,
   Compass,
@@ -39,9 +39,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     likedTrackIds,
     deletePlaylist,
     setIsCreateAlbumModalOpen,
+    openConfirmDialog,
   } = usePlayer();
   const { isAdmin } = useAuth();
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleOpenCreateAlbum = () => {
     setIsCreateAlbumModalOpen(true);
@@ -213,7 +213,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ) : (
             userPlaylists.map((pl) => {
               const isSelected = currentView === 'playlist' && selectedPlaylistId === pl.id;
-              const isConfirming = confirmDeleteId === pl.id;
 
               return (
                 <div
@@ -249,35 +248,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   {pl.isCustom && (
-                    isConfirming ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deletePlaylist(pl.id);
-                          setConfirmDeleteId(null);
-                          if (selectedPlaylistId === pl.id) {
-                            navigateTo('home');
-                          }
-                        }}
-                        onMouseLeave={() => setConfirmDeleteId(null)}
-                        className="px-2 py-1 rounded bg-rose-500 text-white text-[10px] font-bold shrink-0"
-                      >
-                        Xóa?
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmDeleteId(pl.id);
-                        }}
-                        title="Xóa album"
-                        className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1.5 text-[#a3aed0] hover:text-rose-400 rounded transition-opacity shrink-0"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openConfirmDialog({
+                          title: 'Xóa album khỏi thư viện',
+                          description: 'Thao tác này sẽ xóa album cá nhân',
+                          highlight: pl.title,
+                          confirmLabel: 'Xóa album',
+                          cancelLabel: 'Giữ lại',
+                          tone: 'danger',
+                          onConfirm: () => {
+                            deletePlaylist(pl.id);
+                            if (selectedPlaylistId === pl.id) {
+                              navigateTo('home');
+                            }
+                          },
+                        });
+                      }}
+                      title="Xóa album"
+                      className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1.5 text-[#a3aed0] hover:text-rose-400 rounded transition-opacity shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   )}
                 </div>
               );

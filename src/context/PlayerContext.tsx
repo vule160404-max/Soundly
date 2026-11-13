@@ -8,6 +8,16 @@ import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 export const DEFAULT_CUSTOM_ALBUM_COVER =
   'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
 
+export interface ConfirmDialogOptions {
+  title: string;
+  description: string;
+  highlight?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: 'danger' | 'primary';
+  onConfirm: () => void | Promise<void>;
+}
+
 interface PlayerContextType {
   // Current playback
   currentTrack: Track | null;
@@ -51,12 +61,15 @@ interface PlayerContextType {
   toggleTrackInPlaylist: (playlistId: string, track: Track) => boolean;
   deletePlaylist: (playlistId: string) => void;
 
-  // Album modals state
+  // Album & Confirm modals state
   albumPickerTrack: Track | null;
   openAlbumPicker: (track: Track) => void;
   closeAlbumPicker: () => void;
   isCreateAlbumModalOpen: boolean;
   setIsCreateAlbumModalOpen: (open: boolean) => void;
+  confirmDialog: ConfirmDialogOptions | null;
+  openConfirmDialog: (options: ConfirmDialogOptions) => void;
+  closeConfirmDialog: () => void;
 
   // History
   recentHistory: Track[];
@@ -164,9 +177,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     loadLocalPlaylists(user?.uid)
   );
 
-  // Album Modals
+  // Album & Confirm Modals
   const [albumPickerTrack, setAlbumPickerTrack] = useState<Track | null>(null);
   const [isCreateAlbumModalOpen, setIsCreateAlbumModalOpen] = useState<boolean>(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogOptions | null>(null);
 
   // Sleep Timer
   const [sleepTimerEndTime, setSleepTimerEndTime] = useState<number | null>(null);
@@ -754,6 +768,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setAlbumPickerTrack(null);
   };
 
+  const openConfirmDialog = (options: ConfirmDialogOptions) => {
+    setConfirmDialog(options);
+  };
+
+  const closeConfirmDialog = () => {
+    setConfirmDialog(null);
+  };
+
   return (
     <PlayerContext.Provider
       value={{
@@ -796,6 +818,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         closeAlbumPicker,
         isCreateAlbumModalOpen,
         setIsCreateAlbumModalOpen,
+        confirmDialog,
+        openConfirmDialog,
+        closeConfirmDialog,
         recentHistory,
         sleepTimerRemaining,
         setSleepTimer,

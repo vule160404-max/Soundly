@@ -24,6 +24,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { MobileNowPlayingModal } from './components/MobileNowPlayingModal';
 import { CreateAlbumModal } from './components/CreateAlbumModal';
 import { AddToAlbumModal } from './components/AddToAlbumModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { musicApi } from './services/api';
 import { Track, Playlist, GenreCategory } from './types/music';
@@ -234,6 +235,7 @@ const MainContent: React.FC = () => {
         }}
       />
       <AddToAlbumModal />
+      <ConfirmDialog />
 
       {/* FULLSCREEN NOW PLAYING MODAL ON MOBILE */}
       <MobileNowPlayingModal
