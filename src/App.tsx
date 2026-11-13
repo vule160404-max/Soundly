@@ -92,10 +92,10 @@ const MainContent: React.FC = () => {
   const [allTracks, setAllTracks] = useState<Track[]>(INITIAL_TRACKS);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [genres, setGenres] = useState<GenreCategory[]>(INITIAL_GENRES);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch complete music catalog on sign-in
+  // Fetch complete music catalog on sign-in (instant initial render, background sync)
   useEffect(() => {
     if (!user) return;
 
@@ -103,28 +103,29 @@ const MainContent: React.FC = () => {
 
     async function loadData() {
       try {
-        const [fetchedTracks, fetchedPlaylists, fetchedGenres] = await Promise.all([
-          musicApi.getTracks(),
-          musicApi.getPlaylists(),
-          musicApi.getGenres(),
-        ]);
-
-        if (isMounted) {
-          setAllTracks(fetchedTracks || []);
-          setPlaylists(fetchedPlaylists || []);
-          if (fetchedGenres && fetchedGenres.length > 0) setGenres(fetchedGenres);
+        const fetchedTracks = await musicApi.getTracks();
+        if (isMounted && fetchedTracks && fetchedTracks.length > 0) {
+          setAllTracks(fetchedTracks);
         }
       } catch (err) {
         console.warn('Could not fetch from backend API, using initial catalog:', err);
-      } finally {
-        if (isMounted) setIsLoading(false);
       }
     }
 
     loadData();
 
+    const handleCatalogRefreshed = (e: Event) => {
+      const detail = (e as CustomEvent<{ tracks?: Track[] }>).detail;
+      if (isMounted && detail?.tracks && detail.tracks.length > 0) {
+        setAllTracks(detail.tracks);
+      }
+    };
+
+    window.addEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
     };
   }, [user]);
 

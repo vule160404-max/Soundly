@@ -225,43 +225,57 @@ export const musicApi = {
       }
     };
 
-    // 1. Load from localStorage backup first (instant)
-    try {
-      mergeTracks(getLocalCustomTracks());
-    } catch {
-      // ignore
+    // 1. Load from localStorage backup + INITIAL_TRACKS instantly (no waiting)
+    const localTracks = getLocalCustomTracks();
+    if (localTracks.length > 0) {
+      mergeTracks(localTracks);
     }
 
-    // 2. Load from Firestore (persistent across devices & deployments)
-    const rawFirestoreMap = new Map<string, Track>();
-    try {
-      const snap = await getDocs(collection(db, 'soundly_tracks'));
-      const firestoreTracks: Track[] = [];
-      snap.forEach(d => {
-        const data = d.data() as Track;
-        if (data && data.id) {
-          rawFirestoreMap.set(data.id, data);
-          firestoreTracks.push(data);
-        }
-      });
-      if (firestoreTracks.length > 0) {
-        mergeTracks(firestoreTracks);
-      }
-    } catch (err) {
-      console.warn('Could not fetch tracks from Firestore:', err);
-    }
+    // 2. Fetch from Firestore & R2 API in the background so app loads instantly, then updates state smoothly
+    if (typeof window !== 'undefined') {
+      Promise.all([
+        getDocs(collection(db, 'soundly_tracks')).catch(() => null),
+        fetch('/api/tracks').then(res => (res.ok && isJsonResponse(res) ? res.json() : null)).catch(() => null),
+      ]).then(([fsSnap, apiTracks]) => {
+        let hasNew = false;
+        const freshMap = new Map<string, Track>();
+        for (const t of allTracks) freshMap.set(t.id, t);
 
-    // 3. Load from R2 catalog & auto-discovered R2 tracks via /api/tracks
-    try {
-      const res = await fetch('/api/tracks');
-      if (res.ok && isJsonResponse(res)) {
-        const apiTracks = (await res.json()) as Track[];
-        if (Array.isArray(apiTracks) && apiTracks.length > 0) {
-          mergeTracks(apiTracks);
+        if (fsSnap) {
+          fsSnap.forEach(d => {
+            const data = d.data() as Track;
+            if (data && data.id && !freshMap.has(data.id)) {
+              freshMap.set(data.id, healTrackVietnameseDisplay({
+                ...data,
+                audioUrl: normalizePlayableUrl(data.audioUrl),
+                coverUrl: normalizePlayableUrl(data.coverUrl),
+              }));
+              hasNew = true;
+            }
+          });
         }
-      }
-    } catch (err) {
-      console.warn('Could not fetch tracks from R2 API:', err);
+
+        if (Array.isArray(apiTracks)) {
+          for (const t of apiTracks) {
+            if (t && t.id && !freshMap.has(t.id)) {
+              freshMap.set(t.id, healTrackVietnameseDisplay({
+                ...t,
+                audioUrl: normalizePlayableUrl(t.audioUrl),
+                coverUrl: normalizePlayableUrl(t.coverUrl),
+              }));
+              hasNew = true;
+            }
+          }
+        }
+
+        if (hasNew) {
+          window.dispatchEvent(
+            new CustomEvent('soundly:catalog-refreshed', {
+              detail: { tracks: Array.from(freshMap.values()) },
+            })
+          );
+        }
+      }).catch(() => {});
     }
 
     // Final deduplication pass & merge locally persisted play counts
@@ -272,26 +286,12 @@ export const musicApi = {
       plays: Math.max(Number(t.plays) || 0, Number(localPlays[t.id]) || 0),
     }));
 
-    // Keep localStorage & Firestore synced when R2/healer upgrades unaccented titles, covers, or durations
+    // Keep localStorage synced when custom tracks are updated
     const customOnly = allTracks.filter(
       t => !INITIAL_TRACKS.some(it => it.id === t.id)
     );
     if (customOnly.length > 0) {
       saveLocalCustomTracks(customOnly);
-      for (const t of customOnly) {
-        const prevFs = rawFirestoreMap.get(t.id);
-        if (
-          prevFs &&
-          (prevFs.title !== t.title ||
-            prevFs.artist !== t.artist ||
-            prevFs.coverUrl !== t.coverUrl ||
-            prevFs.duration !== t.duration)
-        ) {
-          void setDoc(doc(db, 'soundly_tracks', t.id), sanitizeTrackForFirestore(t)).catch(
-            () => {}
-          );
-        }
-      }
     }
 
     // Filter by genre
