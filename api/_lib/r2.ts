@@ -712,6 +712,161 @@ export async function saveR2CatalogTracks(
   }
 }
 
+function normalizeR2CompareText(raw?: string): string {
+  return (raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeR2CoreTitle(rawTitle?: string): string {
+  const cleaned = (rawTitle || '')
+    .replace(/(?:\(|\[)?\b(?:feat\.?|ft\.?|featuring)\s+[^)\]]+(?:\)|\])?/gi, ' ')
+    .replace(/\b(?:official\s+mv|official\s+video|official\s+audio|lyric\s+video|320kbps|128kbps)\b/gi, ' ')
+    .replace(/\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i, ' ')
+    .replace(/^[0-9]{1,3}[\s._-]+/, '');
+  return normalizeR2CompareText(cleaned) || normalizeR2CompareText(rawTitle);
+}
+
+function extractR2ArtistTokens(rawArtist?: string, rawTitle?: string): string[] {
+  const featMatches: string[] = [];
+  const featRegex = /(?:\(|\[)?\b(?:feat\.?|ft\.?|featuring)\s+([^)\]]+)(?:\)|\])?/gi;
+  let m: RegExpExecArray | null;
+  const titleStr = rawTitle || '';
+  while ((m = featRegex.exec(titleStr)) !== null) {
+    if (m[1]) featMatches.push(m[1]);
+  }
+  const combined = [rawArtist || '', ...featMatches].join(', ');
+  const placeholders = new Set(['nghe si chua ro', 'nghe si spotflow', 'unknown artist']);
+  const tokens = combined
+    .split(/(?:,|&|;|\/|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bwith\b|\band\b|\bva\b)/i)
+    .map(p => normalizeR2CompareText(p))
+    .filter(p => p.length > 0 && !placeholders.has(p));
+  return Array.from(new Set(tokens)).sort();
+}
+
+function isStoredR2Audio(url?: string): boolean {
+  if (!url) return false;
+  return (
+    url.includes('/api/r2/stream') ||
+    url.includes('.r2.dev/') ||
+    url.includes('.r2.cloudflarestorage.com/')
+  );
+}
+
+function areR2TracksDuplicate(
+  a: Pick<R2StoredTrack, 'id' | 'title' | 'artist' | 'audioUrl' | 'spotifyTrackId'>,
+  b: Pick<R2StoredTrack, 'id' | 'title' | 'artist' | 'audioUrl' | 'spotifyTrackId'>
+): boolean {
+  if (a.id && b.id && a.id === b.id) return true;
+  if (
+    a.spotifyTrackId &&
+    b.spotifyTrackId &&
+    a.spotifyTrackId.trim() === b.spotifyTrackId.trim()
+  ) {
+    return true;
+  }
+  if (
+    a.audioUrl &&
+    b.audioUrl &&
+    !a.audioUrl.startsWith('blob:') &&
+    a.audioUrl.trim() === b.audioUrl.trim()
+  ) {
+    return true;
+  }
+
+  const titleA = normalizeR2CoreTitle(a.title);
+  const titleB = normalizeR2CoreTitle(b.title);
+  if (!titleA || !titleB || titleA !== titleB) return false;
+
+  const artistsA = extractR2ArtistTokens(a.artist, a.title);
+  const artistsB = extractR2ArtistTokens(b.artist, b.title);
+  if (artistsA.length === 0 || artistsB.length === 0) return true;
+  if (artistsA.join('|') === artistsB.join('|')) return true;
+
+  for (const x of artistsA) {
+    for (const y of artistsB) {
+      if (x === y) return true;
+      if (x.length >= 4 && y.length >= 4 && (x.includes(y) || y.includes(x))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2StoredTrack {
+  const primaryR2 = isStoredR2Audio(primary.audioUrl);
+  const secondaryR2 = isStoredR2Audio(secondary.audioUrl);
+  const bestAudio = primaryR2 || !secondaryR2 ? primary : secondary;
+  const other = bestAudio === primary ? secondary : primary;
+
+  const hasUsableLyrics = (t: R2StoredTrack) =>
+    Boolean(t.syncedLyrics?.trim()) ||
+    Boolean(t.plainLyrics?.trim()) ||
+    (Array.isArray(t.lyrics) &&
+      t.lyrics.length > 2 &&
+      !t.lyrics.every(l => l.text.startsWith('Đang phát bản nhạc')));
+
+  const lyricsSource = hasUsableLyrics(bestAudio)
+    ? bestAudio
+    : hasUsableLyrics(other)
+      ? other
+      : bestAudio;
+
+  const coverUrl =
+    bestAudio.coverUrl && bestAudio.coverUrl !== DEFAULT_COVER_URL
+      ? bestAudio.coverUrl
+      : other.coverUrl && other.coverUrl !== DEFAULT_COVER_URL
+        ? other.coverUrl
+        : bestAudio.coverUrl || other.coverUrl || DEFAULT_COVER_URL;
+
+  return {
+    ...other,
+    ...bestAudio,
+    id: bestAudio.id || other.id,
+    title: bestAudio.title || other.title,
+    artist: bestAudio.artist || other.artist,
+    audioUrl: bestAudio.audioUrl || other.audioUrl,
+    coverUrl,
+    plays: Math.max(Number(primary.plays) || 0, Number(secondary.plays) || 0),
+    lyrics: lyricsSource.lyrics || bestAudio.lyrics,
+    ...(lyricsSource.syncedLyrics || bestAudio.syncedLyrics
+      ? { syncedLyrics: lyricsSource.syncedLyrics || bestAudio.syncedLyrics }
+      : {}),
+    ...(lyricsSource.plainLyrics || bestAudio.plainLyrics
+      ? { plainLyrics: lyricsSource.plainLyrics || bestAudio.plainLyrics }
+      : {}),
+    ...(lyricsSource.lyricsMode || bestAudio.lyricsMode
+      ? { lyricsMode: lyricsSource.lyricsMode || bestAudio.lyricsMode }
+      : {}),
+    ...(bestAudio.spotifyTrackId || other.spotifyTrackId
+      ? { spotifyTrackId: bestAudio.spotifyTrackId || other.spotifyTrackId }
+      : {}),
+    ...(bestAudio.spotifyUrl || other.spotifyUrl
+      ? { spotifyUrl: bestAudio.spotifyUrl || other.spotifyUrl }
+      : {}),
+  };
+}
+
+function deduplicateR2TrackList(tracks: R2StoredTrack[]): R2StoredTrack[] {
+  const out: R2StoredTrack[] = [];
+  for (const t of tracks) {
+    if (!t || !t.id) continue;
+    const dupIdx = out.findIndex(existing => areR2TracksDuplicate(existing, t));
+    if (dupIdx === -1) {
+      out.push(t);
+    } else {
+      out[dupIdx] = mergeR2TrackPair(out[dupIdx], t);
+    }
+  }
+  return out;
+}
+
 export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
   const cfg = loadR2Config();
   if (!isR2Configured(cfg)) return [];
@@ -796,7 +951,7 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       return next;
     });
 
-    return [...healedManifest, ...recoveredTracks];
+    return deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
   } catch (err) {
     console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
     return [];
@@ -812,21 +967,7 @@ export async function upsertR2CatalogTracks(
   const client = getR2Client(cfg);
   const existing = await readR2CatalogManifest(client, cfg.bucketName);
 
-  // Deduplicate incoming by id (keeping latest entry)
-  const dedupedIncoming: R2StoredTrack[] = [];
-  const seenIncoming = new Set<string>();
-  for (const t of incomingTracks) {
-    if (!t.id || seenIncoming.has(t.id)) continue;
-    seenIncoming.add(t.id);
-    dedupedIncoming.push(t);
-  }
-
-  const incomingIds = new Set(dedupedIncoming.map(t => t.id));
-  const merged = [
-    ...dedupedIncoming,
-    ...existing.filter(t => !incomingIds.has(t.id)),
-  ];
-
+  const merged = deduplicateR2TrackList([...incomingTracks, ...existing]);
   await saveR2CatalogTracks(merged);
   return merged;
 }
@@ -846,6 +987,34 @@ export async function updateR2CatalogTrack(
   existing[idx] = { ...existing[idx], ...patch };
   await saveR2CatalogTracks(existing);
   return existing[idx];
+}
+
+export async function incrementR2CatalogTrackPlays(
+  id: string
+): Promise<number | null> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return null;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2CatalogManifest(client, cfg.bucketName);
+  const idx = existing.findIndex(t => t.id === id);
+
+  if (idx !== -1) {
+    const nextPlays = Math.max(0, Number(existing[idx].plays) || 0) + 1;
+    existing[idx] = { ...existing[idx], plays: nextPlays };
+    await saveR2CatalogTracks(existing);
+    return nextPlays;
+  }
+
+  // Fallback for tracks auto-recovered directly from R2 tracks/ prefix before manifest existed
+  const allR2 = await getR2CatalogTracks();
+  const recovered = allR2.find(t => t.id === id);
+  if (!recovered) return null;
+
+  const nextPlays = Math.max(0, Number(recovered.plays) || 0) + 1;
+  const updated = [{ ...recovered, plays: nextPlays }, ...existing];
+  await saveR2CatalogTracks(updated);
+  return nextPlays;
 }
 
 export async function deleteR2CatalogTrack(id: string): Promise<boolean> {

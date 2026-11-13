@@ -2,6 +2,11 @@ import { Track, Playlist, GenreCategory, LyricLine } from '../types/music';
 import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from '../data/mockTracks';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import {
+  areTracksDuplicate,
+  deduplicateTracksList,
+  mergeDuplicateTrackPair,
+} from '../utils/trackDedupe';
 
 export interface AIClassifyInput {
   id: string;
@@ -43,6 +48,36 @@ function saveLocalCustomTracks(tracks: Track[]) {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(tracks));
   } catch {
     // ignore
+  }
+}
+
+const LOCAL_PLAYS_KEY = 'soundly_track_plays_v1';
+
+function getLocalPlayCounts(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAYS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalPlayCounts(counts: Record<string, number>) {
+  try {
+    localStorage.setItem(LOCAL_PLAYS_KEY, JSON.stringify(counts));
+  } catch {
+    // ignore
+  }
+}
+
+function setLocalPlayCount(trackId: string, plays: number) {
+  const counts = getLocalPlayCounts();
+  const prev = Number(counts[trackId]) || 0;
+  if (plays > prev) {
+    counts[trackId] = plays;
+    saveLocalPlayCounts(counts);
   }
 }
 
@@ -146,13 +181,6 @@ export const musicApi = {
   async getTracks(search?: string, genre?: string): Promise<Track[]> {
     let allTracks: Track[] = [...INITIAL_TRACKS];
 
-    const indexById = new Map<string, number>();
-    const existingUrls = new Set<string>();
-    allTracks.forEach((t, idx) => {
-      indexById.set(t.id, idx);
-      if (t.audioUrl) existingUrls.add(t.audioUrl);
-    });
-
     const mergeTracks = (incoming: Track[]) => {
       for (const rawTrack of incoming) {
         if (!rawTrack || !rawTrack.id) continue;
@@ -161,25 +189,14 @@ export const musicApi = {
           audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
           coverUrl: normalizePlayableUrl(rawTrack.coverUrl),
         };
-        const existingIdx = indexById.get(t.id);
-        if (existingIdx !== undefined) {
-          const prev = allTracks[existingIdx];
-          allTracks[existingIdx] = {
-            ...prev,
-            ...t,
-            audioUrl: t.audioUrl && !t.audioUrl.startsWith('blob:') ? t.audioUrl : prev.audioUrl,
-            syncedLyrics: t.syncedLyrics || prev.syncedLyrics,
-            plainLyrics: t.plainLyrics || prev.plainLyrics,
-            lyrics: t.lyrics && t.lyrics.length > 0 ? t.lyrics : prev.lyrics,
-            coverUrl: t.coverUrl || prev.coverUrl,
-          };
+        const existingIdx = allTracks.findIndex(existing =>
+          areTracksDuplicate(existing, t)
+        );
+        if (existingIdx !== -1) {
+          allTracks[existingIdx] = mergeDuplicateTrackPair(allTracks[existingIdx], t);
           continue;
         }
-        if (!t.audioUrl || !existingUrls.has(t.audioUrl)) {
-          allTracks.unshift(t);
-          allTracks.forEach((item, idx) => indexById.set(item.id, idx));
-          if (t.audioUrl) existingUrls.add(t.audioUrl);
-        }
+        allTracks.unshift(t);
       }
     };
 
@@ -216,6 +233,14 @@ export const musicApi = {
     } catch (err) {
       console.warn('Could not fetch tracks from R2 API:', err);
     }
+
+    // Final deduplication pass & merge locally persisted play counts
+    const { deduped } = deduplicateTracksList(allTracks);
+    const localPlays = getLocalPlayCounts();
+    allTracks = deduped.map(t => ({
+      ...t,
+      plays: Math.max(Number(t.plays) || 0, Number(localPlays[t.id]) || 0),
+    }));
 
     // Keep localStorage synced with merged cloud tracks
     const customOnly = allTracks.filter(
@@ -326,6 +351,7 @@ export const musicApi = {
 
   async addBatchTracks(
     tracksData: Array<{
+      id?: string;
       title: string;
       artist: string;
       album?: string;
@@ -335,9 +361,16 @@ export const musicApi = {
       duration?: number;
       bpm?: number;
       mood?: string;
+      plays?: number;
       aiClassified?: boolean;
       aiReason?: string;
       lyricsText?: string;
+      lyrics?: LyricLine[];
+      syncedLyrics?: string;
+      plainLyrics?: string;
+      lyricsMode?: 'synced' | 'plain' | 'none';
+      spotifyTrackId?: string;
+      spotifyUrl?: string;
     }>
   ): Promise<Track[]> {
     const newTracks: Track[] = tracksData.map((t, idx) => {
@@ -345,6 +378,8 @@ export const musicApi = {
       if (t.lyricsText && t.lyricsText.trim()) {
         const lines = t.lyricsText.split('\n').filter(l => l.trim().length > 0);
         formattedLyrics = lines.map((l, i) => ({ time: i * 6, text: l.trim() }));
+      } else if (Array.isArray(t.lyrics) && t.lyrics.length > 0) {
+        formattedLyrics = t.lyrics;
       } else {
         formattedLyrics = [
           { time: 5, text: `Đang phát bản nhạc: ${t.title}` },
@@ -353,7 +388,7 @@ export const musicApi = {
       }
 
       return {
-        id: `uploaded-${Date.now()}-${idx}`,
+        id: t.id || `uploaded-${Date.now()}-${idx}`,
         title: t.title.trim(),
         artist: t.artist.trim() || 'Nghệ sĩ chưa rõ',
         album: t.album?.trim() || 'Kho nhạc Soundly',
@@ -369,13 +404,18 @@ export const musicApi = {
         aiClassified: Boolean(t.aiClassified),
         aiReason: t.aiReason || 'Tải lên bởi quản trị viên',
         lyrics: formattedLyrics,
-        plays: 0,
+        plays: typeof t.plays === 'number' ? t.plays : 0,
+        ...(t.syncedLyrics ? { syncedLyrics: t.syncedLyrics } : {}),
+        ...(t.plainLyrics ? { plainLyrics: t.plainLyrics } : {}),
+        ...(t.lyricsMode ? { lyricsMode: t.lyricsMode } : {}),
+        ...(t.spotifyTrackId ? { spotifyTrackId: t.spotifyTrackId } : {}),
+        ...(t.spotifyUrl ? { spotifyUrl: t.spotifyUrl } : {}),
       };
     });
 
-    // 1. Save to localStorage backup
+    // 1. Save to localStorage backup (deduplicated)
     const currentLocal = getLocalCustomTracks();
-    const updatedLocal = [...newTracks, ...currentLocal];
+    const { deduped: updatedLocal } = deduplicateTracksList([...newTracks, ...currentLocal]);
     saveLocalCustomTracks(updatedLocal);
 
     // 2. Save to Firestore (Guarantees Vercel & cross-device persistence)
@@ -448,6 +488,47 @@ export const musicApi = {
     return true;
   },
 
+  async recordTrackPlay(trackId: string, currentKnownPlays: number = 0): Promise<number> {
+    const counts = getLocalPlayCounts();
+    const basePlays = Math.max(
+      Number(counts[trackId]) || 0,
+      Number(currentKnownPlays) || 0
+    );
+    const optimisticNext = basePlays + 1;
+    setLocalPlayCount(trackId, optimisticNext);
+
+    const local = getLocalCustomTracks();
+    if (local.some(t => t.id === trackId)) {
+      saveLocalCustomTracks(
+        local.map(t =>
+          t.id === trackId
+            ? { ...t, plays: Math.max(Number(t.plays) || 0, optimisticNext) }
+            : t
+        )
+      );
+    }
+
+    try {
+      const res = await fetch('/api/tracks/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackId }),
+        keepalive: true,
+      });
+      if (res.ok && isJsonResponse(res)) {
+        const data = await res.json();
+        const serverPlays = typeof data.plays === 'number' ? data.plays : 0;
+        const resolved = Math.max(optimisticNext, serverPlays);
+        setLocalPlayCount(trackId, resolved);
+        return resolved;
+      }
+    } catch {
+      // keep optimistic local count if offline
+    }
+
+    return optimisticNext;
+  },
+
   async syncSpotflowTracks(
     spotflowUrl: string,
     apiKey: string,
@@ -458,6 +539,8 @@ export const musicApi = {
     addedCount: number;
     updatedCount: number;
     skippedCount: number;
+    failedAudioCount: number;
+    failedAudioMessages: string[];
     addedTracks: Track[];
     updatedTracks: Track[];
     tracks: Track[];
@@ -539,6 +622,8 @@ export const musicApi = {
       addedCount: typeof data.addedCount === 'number' ? data.addedCount : addedTracks.length,
       updatedCount: typeof data.updatedCount === 'number' ? data.updatedCount : updatedTracks.length,
       skippedCount: typeof data.skippedCount === 'number' ? data.skippedCount : 0,
+      failedAudioCount: typeof data.failedAudioCount === 'number' ? data.failedAudioCount : 0,
+      failedAudioMessages: Array.isArray(data.failedAudioMessages) ? data.failedAudioMessages : [],
       addedTracks,
       updatedTracks,
       tracks: Array.isArray(data.tracks) ? data.tracks : changedTracks,

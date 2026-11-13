@@ -125,6 +125,8 @@ export default async function handler(
       addedCount: result.addedCount,
       updatedCount: result.updatedCount,
       skippedCount: result.skippedCount,
+      failedAudioCount: result.failedAudioCount,
+      failedAudioMessages: result.failedAudioMessages,
       addedTracks: result.addedTracks,
       updatedTracks: result.updatedTracks,
       tracks: result.tracks,

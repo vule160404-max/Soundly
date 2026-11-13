@@ -6,6 +6,10 @@
     --font-mono: 'JetBrains Mono', monospace;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: #070b1a;
@@ -30,6 +34,7 @@
 ::-webkit-scrollbar-thumb {
   background: rgba(163, 174, 208, 0.22);
   border-radius: 9999px;
+  transition: background-color 180ms ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -42,11 +47,11 @@ input[type="range"] {
 }
 
 input[type="range"]::-webkit-slider-thumb {
-  transition: transform 0.15s ease;
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 input[type="range"]:hover::-webkit-slider-thumb {
-  transform: scale(1.2);
+  transform: scale(1.22);
 }
 
 @keyframes soundlyBackdropIn {
@@ -69,17 +74,36 @@ input[type="range"]:hover::-webkit-slider-thumb {
   }
 }
 
+@keyframes soundlyEqBar {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 .soundly-backdrop {
   animation: soundlyBackdropIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .soundly-modal {
-  animation: soundlyModalIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: soundlyModalIn 210ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.soundly-eq-bar {
+  transform-origin: bottom;
+  animation: soundlyEqBar 780ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
   .soundly-backdrop,
-  .soundly-modal {
+  .soundly-modal,
+  .soundly-eq-bar {
     animation: none;
   }
 }

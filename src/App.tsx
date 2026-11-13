@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { PlayerProvider, usePlayer } from './context/PlayerContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/Sidebar';
@@ -56,6 +57,7 @@ const MainContent: React.FC = () => {
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [genres, setGenres] = useState<GenreCategory[]>(INITIAL_GENRES);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Fetch complete music catalog on sign-in
   useEffect(() => {
@@ -89,6 +91,45 @@ const MainContent: React.FC = () => {
       isMounted = false;
     };
   }, [user]);
+
+  // Real-time play count synchronization for Top 50 & Artist play metrics
+  useEffect(() => {
+    const handleTrackPlayed = (e: Event) => {
+      const detail = (e as CustomEvent<{ trackId?: string }>).detail;
+      const trackId = detail?.trackId;
+      if (!trackId) return;
+      setAllTracks((prev) =>
+        prev.map((t) =>
+          t.id === trackId ? { ...t, plays: Math.max(0, Number(t.plays) || 0) + 1 } : t
+        )
+      );
+    };
+
+    const handlePlaysSynced = (e: Event) => {
+      const detail = (e as CustomEvent<{ trackId?: string; plays?: number }>).detail;
+      const trackId = detail?.trackId;
+      const plays = detail?.plays;
+      if (!trackId || typeof plays !== 'number') return;
+      setAllTracks((prev) =>
+        prev.map((t) =>
+          t.id === trackId ? { ...t, plays: Math.max(Number(t.plays) || 0, plays) } : t
+        )
+      );
+    };
+
+    window.addEventListener('soundly:track-played', handleTrackPlayed);
+    window.addEventListener('soundly:track-plays-synced', handlePlaysSynced);
+    return () => {
+      window.removeEventListener('soundly:track-played', handleTrackPlayed);
+      window.removeEventListener('soundly:track-plays-synced', handlePlaysSynced);
+    };
+  }, []);
+
+  const viewKey = `${currentView}:${selectedPlaylistId || ''}:${selectedArtistId || ''}`;
+
+  useEffect(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [viewKey]);
 
   // Real-time synchronized Artist Directory (splits multi-artist strings & updates live)
   const artists = useMemo(() => buildArtistDirectory(allTracks), [allTracks]);
@@ -192,83 +233,98 @@ const MainContent: React.FC = () => {
         />
 
         {/* SCROLLABLE VIEW CONTENT */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28"
+        >
           {isLoading ? (
             <div className="flex items-center justify-center h-64 text-[#f47b64] gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
               <span className="text-sm font-semibold">Đang nạp kho nhạc Soundly...</span>
             </div>
-          ) : currentView === 'home' ? (
-            <HomeView
-              tracks={filteredTracks}
-              playlists={playlists}
-              artists={artists}
-              onSelectPlaylist={(pl) => {
-                setSelectedPlaylistId(pl.id);
-                setCurrentView('playlist');
-              }}
-              onSelectArtist={handleSelectArtist}
-              onSelectArtistByName={handleSelectArtistByName}
-              onOpenArtists={() => setCurrentView('artists')}
-              onExploreGenres={() => setCurrentView('explore')}
-            />
-          ) : currentView === 'explore' ? (
-            <ExploreView
-              tracks={filteredTracks}
-              genres={genres}
-              artists={artists}
-              searchQuery={searchQuery}
-              activeGenre={activeGenre}
-              setActiveGenre={setActiveGenre}
-              onSelectArtist={handleSelectArtist}
-              onSelectArtistByName={handleSelectArtistByName}
-              onOpenArtists={() => setCurrentView('artists')}
-            />
-          ) : currentView === 'artists' ? (
-            <ArtistsView
-              artists={artists}
-              onSelectArtist={handleSelectArtist}
-            />
-          ) : currentView === 'artist-detail' && selectedArtist ? (
-            <ArtistDetailView
-              artist={selectedArtist}
-              allArtists={artists}
-              onBackToArtists={() => setCurrentView('artists')}
-              onSelectArtist={handleSelectArtist}
-            />
-          ) : currentView === 'playlist' && selectedPlaylist ? (
-            <PlaylistDetailView
-              playlist={selectedPlaylist}
-              allTracks={allTracks}
-              onBackToHome={() => {
-                setCurrentView('home');
-                setSelectedPlaylistId(null);
-              }}
-              onSelectArtist={handleSelectArtistByName}
-            />
-          ) : currentView === 'liked' ? (
-            <LikedSongsView
-              allTracks={allTracks}
-              onSelectArtist={handleSelectArtistByName}
-            />
-          ) : currentView === 'history' ? (
-            <HistoryView onSelectArtist={handleSelectArtistByName} />
-          ) : currentView === 'admin' ? (
-            <AdminDashboardView tracks={allTracks} onTracksUpdated={setAllTracks} />
           ) : (
-            <HomeView
-              tracks={filteredTracks}
-              playlists={playlists}
-              artists={artists}
-              onSelectPlaylist={(pl) => {
-                setSelectedPlaylistId(pl.id);
-                setCurrentView('playlist');
-              }}
-              onSelectArtist={handleSelectArtist}
-              onSelectArtistByName={handleSelectArtistByName}
-              onOpenArtists={() => setCurrentView('artists')}
-              onExploreGenres={() => setCurrentView('explore')}
-            />
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={viewKey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {currentView === 'home' ? (
+                  <HomeView
+                    tracks={filteredTracks}
+                    playlists={playlists}
+                    artists={artists}
+                    onSelectPlaylist={(pl) => {
+                      setSelectedPlaylistId(pl.id);
+                      setCurrentView('playlist');
+                    }}
+                    onSelectArtist={handleSelectArtist}
+                    onSelectArtistByName={handleSelectArtistByName}
+                    onOpenArtists={() => setCurrentView('artists')}
+                    onExploreGenres={() => setCurrentView('explore')}
+                  />
+                ) : currentView === 'explore' ? (
+                  <ExploreView
+                    tracks={filteredTracks}
+                    genres={genres}
+                    artists={artists}
+                    searchQuery={searchQuery}
+                    activeGenre={activeGenre}
+                    setActiveGenre={setActiveGenre}
+                    onSelectArtist={handleSelectArtist}
+                    onSelectArtistByName={handleSelectArtistByName}
+                    onOpenArtists={() => setCurrentView('artists')}
+                  />
+                ) : currentView === 'artists' ? (
+                  <ArtistsView
+                    artists={artists}
+                    onSelectArtist={handleSelectArtist}
+                  />
+                ) : currentView === 'artist-detail' && selectedArtist ? (
+                  <ArtistDetailView
+                    artist={selectedArtist}
+                    allArtists={artists}
+                    onBackToArtists={() => setCurrentView('artists')}
+                    onSelectArtist={handleSelectArtist}
+                  />
+                ) : currentView === 'playlist' && selectedPlaylist ? (
+                  <PlaylistDetailView
+                    playlist={selectedPlaylist}
+                    allTracks={allTracks}
+                    onBackToHome={() => {
+                      setCurrentView('home');
+                      setSelectedPlaylistId(null);
+                    }}
+                    onSelectArtist={handleSelectArtistByName}
+                  />
+                ) : currentView === 'liked' ? (
+                  <LikedSongsView
+                    allTracks={allTracks}
+                    onSelectArtist={handleSelectArtistByName}
+                  />
+                ) : currentView === 'history' ? (
+                  <HistoryView onSelectArtist={handleSelectArtistByName} />
+                ) : currentView === 'admin' ? (
+                  <AdminDashboardView tracks={allTracks} onTracksUpdated={setAllTracks} />
+                ) : (
+                  <HomeView
+                    tracks={filteredTracks}
+                    playlists={playlists}
+                    artists={artists}
+                    onSelectPlaylist={(pl) => {
+                      setSelectedPlaylistId(pl.id);
+                      setCurrentView('playlist');
+                    }}
+                    onSelectArtist={handleSelectArtist}
+                    onSelectArtistByName={handleSelectArtistByName}
+                    onOpenArtists={() => setCurrentView('artists')}
+                    onExploreGenres={() => setCurrentView('explore')}
+                  />
+                )}
+              </motion.div>
+            </AnimatePresence>
           )}
         </div>
       </main>
@@ -312,10 +368,12 @@ const MainContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <PlayerProvider>
-        <MainContent />
-      </PlayerProvider>
-    </AuthProvider>
+    <MotionConfig reducedMotion="user">
+      <AuthProvider>
+        <PlayerProvider>
+          <MainContent />
+        </PlayerProvider>
+      </AuthProvider>
+    </MotionConfig>
   );
 }

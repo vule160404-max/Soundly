@@ -4,6 +4,7 @@ import { Track, Playlist, RepeatMode } from '../types/music';
 import { INITIAL_PLAYLISTS } from '../data/mockTracks';
 import { useAuth } from './AuthContext';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
+import { musicApi } from '../services/api';
 
 export const DEFAULT_CUSTOM_ALBUM_COVER =
   'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
@@ -129,6 +130,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user } = useAuth();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamFallbackTriedRef = useRef<boolean>(false);
+  const lastRecordedPlayRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
   const handleTrackEndRef = useRef<() => void>(() => {});
 
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
@@ -387,8 +389,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.warn('Audio playback error on url:', currentSrc);
       if (currentSrc.startsWith('blob:')) {
         setAudioError('File tạm trình duyệt đã hết hạn. Vui lòng cấu hình Cloudflare R2 và tải lên lại.');
+      } else if (
+        currentSrc.includes('/api/download/file/') ||
+        currentSrc.includes('onrender.com')
+      ) {
+        setAudioError('Link MP3 tạm từ SpotFlow đã hết hạn (404) và chưa được lưu lên Cloudflare R2.');
       } else {
-        setAudioError('Không thể nạp tệp âm thanh. Vui lòng kiểm tra kết nối hoặc Public URL của R2.');
+        setAudioError('Không thể nạp tệp âm thanh. Vui lòng kiểm tra kết nối hoặc file trên R2.');
       }
       setIsPlaying(false);
     };
@@ -525,23 +532,67 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     const audio = audioRef.current;
-    audio.pause();
-    audio.src = playableUrl;
-    audio.load();
+    const resolvedTarget = new URL(playableUrl, window.location.href).href;
+    if (audio.src === resolvedTarget) {
+      if (audio.error) {
+        audio.load();
+      } else {
+        audio.currentTime = 0;
+      }
+    } else {
+      audio.src = playableUrl;
+    }
+
     audio
       .play()
       .then(() => {
         setIsPlaying(true);
+        setAudioError(null);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
+        const errName = err instanceof Error ? err.name : '';
         console.warn('Audio play request interrupted:', err);
         setIsPlaying(false);
+        if (errName === 'NotAllowedError') {
+          setAudioError('Trình duyệt chặn phát tự động. Vui lòng chạm lại nút Phát.');
+        } else if (errName === 'NotSupportedError') {
+          if (
+            playableUrl.includes('/api/download/file/') ||
+            playableUrl.includes('onrender.com')
+          ) {
+            setAudioError('Link MP3 tạm từ SpotFlow đã hết hạn (404) và chưa được lưu lên Cloudflare R2.');
+          } else {
+            setAudioError('Định dạng âm thanh không được trình duyệt hỗ trợ hoặc file không tồn tại.');
+          }
+        }
       });
 
     setRecentHistory((prev) => {
       const filtered = prev.filter((t) => t.id !== track.id);
       return [track, ...filtered];
     });
+
+    if (typeof window !== 'undefined') {
+      const now = Date.now();
+      const prev = lastRecordedPlayRef.current;
+      if (prev.id !== track.id || now - prev.at > 4000) {
+        lastRecordedPlayRef.current = { id: track.id, at: now };
+        window.dispatchEvent(
+          new CustomEvent('soundly:track-played', {
+            detail: { trackId: track.id },
+          })
+        );
+        void musicApi
+          .recordTrackPlay(track.id, Number(track.plays) || 0)
+          .then((plays) => {
+            window.dispatchEvent(
+              new CustomEvent('soundly:track-plays-synced', {
+                detail: { trackId: track.id, plays },
+              })
+            );
+          });
+      }
+    }
   }, []);
 
   const togglePlay = () => {

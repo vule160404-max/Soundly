@@ -19,6 +19,7 @@ import {
   FolderPlus,
   Check
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 
 interface PlayerBarProps {
@@ -86,11 +87,17 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
       {/* ======================================================== */}
       {/* MOBILE MINI PLAYER BAR (Soundly Navy floating card)      */}
       {/* ======================================================== */}
-      {currentTrack && (
-        <div
-          onClick={onOpenMobileNowPlaying}
-          className="fixed bottom-[68px] left-2 right-2 z-40 bg-[#141d3d] rounded-xl border border-[#2b3b75] shadow-xl md:hidden flex flex-col overflow-hidden select-none cursor-pointer active:scale-[0.99] transition-transform"
-        >
+      <AnimatePresence>
+        {currentTrack && (
+          <motion.div
+            key="mobile-mini-player"
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+            onClick={onOpenMobileNowPlaying}
+            className="fixed bottom-[68px] left-2 right-2 z-40 bg-[#141d3d] rounded-xl border border-[#2b3b75] shadow-xl md:hidden flex flex-col overflow-hidden select-none cursor-pointer active:scale-[0.98] transition-transform duration-150"
+          >
           <div className="flex items-center justify-between p-2 pl-2.5 gap-3 h-14">
             {/* Artwork & Info */}
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -104,9 +111,16 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
                 <p className="text-xs font-bold text-[#f7f5f0] truncate">
                   {currentTrack.title}
                 </p>
-                <p className="text-[11px] text-[#a3aed0] truncate">
-                  {currentTrack.artist}
-                </p>
+                {audioError ? (
+                  <p className="text-[10px] text-amber-400 flex items-center gap-1 truncate mt-0.5">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{audioError}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[#a3aed0] truncate">
+                    {currentTrack.artist}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -149,8 +163,9 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
               style={{ width: `${progressPercent}%` }}
             />
           </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ======================================================== */}
       {/* DESKTOP FULL PLAYER BAR (Soundly Navy desktop dock)      */}
@@ -169,10 +184,10 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
                 />
                 {isPlaying && (
                   <div className="absolute inset-0 bg-[#070b1a]/45 rounded-md flex items-center justify-center">
-                    <div className="flex items-end gap-0.5 h-3">
-                      <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '100%', animationDelay: '0ms' }} />
-                      <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '60%', animationDelay: '150ms' }} />
-                      <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '80%', animationDelay: '300ms' }} />
+                    <div className="flex items-end gap-0.5 h-3.5">
+                      <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '0ms' }} />
+                      <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '180ms' }} />
+                      <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '340ms' }} />
                     </div>
                   </div>
                 )}

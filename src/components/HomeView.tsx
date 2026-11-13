@@ -1,5 +1,5 @@
-import React from 'react';
-import { Play, Pause, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3, Mic2, ArrowRight } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Play, Pause, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3, Mic2, ArrowRight, TrendingUp } from 'lucide-react';
 import { Track, Playlist, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
@@ -43,7 +43,32 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return 'Chào buổi tối';
   };
 
-  const quickPicks = tracks.slice(0, 6);
+  const quickPicks = useMemo(() => {
+    const isReliable = (t: Track) => {
+      const url = (t.audioUrl || '').trim();
+      return (
+        Boolean(url) &&
+        !url.startsWith('blob:') &&
+        !url.includes('/api/download/file/') &&
+        !url.includes('onrender.com')
+      );
+    };
+    const reliable = tracks.filter(isReliable);
+    const others = tracks.filter((t) => !isReliable(t));
+    return [...reliable, ...others].slice(0, 6);
+  }, [tracks]);
+
+  const top50Tracks = useMemo(
+    () =>
+      [...tracks]
+        .sort(
+          (a, b) =>
+            (Number(b.plays) || 0) - (Number(a.plays) || 0) ||
+            a.title.localeCompare(b.title, 'vi')
+        )
+        .slice(0, 50),
+    [tracks]
+  );
 
   const handleQuickPlay = (track: Track, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -114,7 +139,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <div
                     key={track.id}
                     onClick={() => playTrack(track, tracks)}
-                    className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] transition-colors cursor-pointer overflow-hidden ${
+                    className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer overflow-hidden ${
                       isCurrent ? 'bg-[#1c2852] border-[#f47b64]/45' : ''
                     }`}
                   >
@@ -215,7 +240,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           onSelectArtist(artist);
                         }
                       }}
-                      className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] transition-all cursor-pointer flex flex-col items-center text-center"
+                      className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col items-center text-center"
                     >
                       <div className="relative w-24 h-24 sm:w-28 sm:h-28">
                         <ArtistAvatar
@@ -294,7 +319,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <div
                     key={pl.id}
                     onClick={() => onSelectPlaylist(pl)}
-                    className="group p-3 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl transition-all cursor-pointer flex flex-col justify-between"
+                    className="group p-3 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between"
                   >
                     <div>
                       <div className="relative aspect-square rounded-lg overflow-hidden mb-2.5 shadow-md bg-[#162047]">
@@ -337,19 +362,39 @@ export const HomeView: React.FC<HomeViewProps> = ({
             )}
           </section>
 
-          {/* All Available Tracks Table */}
+          {/* Top 50 Most Played Tracks on Soundly */}
           <section>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
-                <span>Toàn bộ kho nhạc</span>
-              </h3>
-              <span className="text-xs text-[#a3aed0] font-mono tabular-nums">
-                {tracks.length} bản nhạc
-              </span>
+            <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+              <div>
+                <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-[#f47b64]" />
+                  <span>Top 50 nghe nhiều nhất</span>
+                </h3>
+                <p className="text-xs text-[#a3aed0] mt-0.5">
+                  Bảng xếp hạng những bản nhạc được nghe nhiều nhất trên Soundly
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[#a3aed0] font-mono tabular-nums">
+                  Top {top50Tracks.length} bản nhạc
+                </span>
+                <button
+                  type="button"
+                  onClick={onExploreGenres}
+                  className="text-xs font-bold text-[#f47b64] hover:text-[#ff8d76] flex items-center gap-1 active:scale-95 transition-all"
+                >
+                  <span>Xem kho nhạc</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
-            <div className="bg-[#0d142c] rounded-xl p-2">
-              <TrackTable tracks={tracks} onSelectArtist={onSelectArtistByName} />
+            <div className="bg-[#0d142c] rounded-xl p-2 border border-[#1e2a54]/60">
+              <TrackTable
+                tracks={top50Tracks}
+                showRankAndPlays
+                onSelectArtist={onSelectArtistByName}
+              />
             </div>
           </section>
         </>
@@ -364,7 +409,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </h3>
             <button
               onClick={onExploreGenres}
-              className="text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] uppercase tracking-wider"
+              className="text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] uppercase tracking-wider active:scale-95 transition-all"
             >
               Hiện tất cả
             </button>
@@ -375,7 +420,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div
                 key={pl.id}
                 onClick={() => onSelectPlaylist(pl)}
-                className="group p-4 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl transition-all duration-300 cursor-pointer flex flex-col justify-between relative"
+                className="group p-4 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between relative"
               >
                 <div>
                   <div className="relative aspect-square rounded-lg overflow-hidden mb-3.5 shadow-lg">

@@ -28,6 +28,12 @@ import { Track } from '../types/music';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
+import {
+  areTracksDuplicate,
+  deduplicateTracksList,
+  findDuplicateTrack,
+  isR2AudioUrl,
+} from '../utils/trackDedupe';
 
 interface AdminDashboardViewProps {
   tracks: Track[];
@@ -110,8 +116,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [spotflowNotice, setSpotflowNotice] = useState<{
     type: 'success' | 'error';
     message: string;
-    detail?: { addedCount: number; updatedCount: number; skippedCount: number };
+    detail?: {
+      addedCount: number;
+      updatedCount: number;
+      skippedCount: number;
+      failedAudioCount?: number;
+      failedAudioMessages?: string[];
+    };
   } | null>(null);
+
+  const isExpiredExternalTrack = (audioUrl?: string) => {
+    const url = (audioUrl || '').trim();
+    return url.includes('/api/download/file/') || url.includes('onrender.com');
+  };
+  const expiredSourceTracks = tracks.filter(t => isExpiredExternalTrack(t.audioUrl));
 
   // Batch upload state (FILES ONLY, NO URLS!)
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
@@ -122,6 +140,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [defaultBatchGenre, setDefaultBatchGenre] = useState<string>('AUTO_AI');
   const [isReclassifyingCatalog, setIsReclassifyingCatalog] = useState<boolean>(false);
+  const [autoSkipDuplicates, setAutoSkipDuplicates] = useState<boolean>(true);
 
   // Fetch logged in users list from Firestore
   useEffect(() => {
@@ -211,8 +230,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       );
 
       const resultMap = new Map(results.map(r => [r.id, r]));
-      setStagedFiles(prev =>
-        prev.map(item => {
+      setStagedFiles(prev => {
+        const mapped = prev.map(item => {
           const ai = resultMap.get(item.id);
           if (!ai) return item;
           return {
@@ -225,8 +244,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             aiClassified: true,
             aiReason: ai.reason,
           };
-        })
-      );
+        });
+        // Deduplicate within staged files after AI refines title & artist
+        const uniqueStaged: StagedFile[] = [];
+        for (const item of mapped) {
+          const alreadyInQueue = uniqueStaged.some(existing =>
+            areTracksDuplicate(existing, item)
+          );
+          if (!alreadyInQueue) {
+            uniqueStaged.push(item);
+          }
+        }
+        return uniqueStaged;
+      });
     } catch (err: unknown) {
       console.error('AI classification failed:', err);
       const msg = err instanceof Error ? err.message : 'Không thể phân loại nhạc tự động bằng AI.';
@@ -245,7 +275,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setAiError(null);
 
     const fileArray = Array.from(files);
-    const newStagedList: StagedFile[] = await Promise.all(
+    const rawStagedList: StagedFile[] = await Promise.all(
       fileArray.map(async (file, index) => {
         const cleanName = file.name.replace(/\.[^/.]+$/, '');
         let parsedTitle = cleanName;
@@ -280,12 +310,70 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       })
     );
 
-    setStagedFiles(prev => [...prev, ...newStagedList]);
+    // Filter out duplicates within the newly selected files and against already-staged files
+    const acceptedNewStaged: StagedFile[] = [];
+    let skippedInBatchCount = 0;
+
+    for (const candidate of rawStagedList) {
+      const dupInCurrentStaged = [...stagedFiles, ...acceptedNewStaged].some(
+        existing =>
+          (existing.fileName.toLowerCase() === candidate.fileName.toLowerCase() &&
+            existing.file.size === candidate.file.size) ||
+          areTracksDuplicate(existing, candidate)
+      );
+      if (dupInCurrentStaged) {
+        skippedInBatchCount++;
+        URL.revokeObjectURL(candidate.objectUrl);
+      } else {
+        acceptedNewStaged.push(candidate);
+      }
+    }
+
+    if (skippedInBatchCount > 0) {
+      setUploadSuccessToast(
+        `Đã tự động lọc bỏ ${skippedInBatchCount} file bị trùng trong danh sách chọn.`
+      );
+      setTimeout(() => setUploadSuccessToast(null), 4000);
+    }
+
+    if (acceptedNewStaged.length === 0) {
+      e.target.value = '';
+      return;
+    }
+
+    setStagedFiles(prev => [...prev, ...acceptedNewStaged]);
     e.target.value = '';
 
     // Automatically classify using Gemini AI if AUTO_AI mode is selected
     if (defaultBatchGenre === 'AUTO_AI') {
-      await runAIClassificationForStaged(newStagedList);
+      await runAIClassificationForStaged(acceptedNewStaged);
+    }
+  };
+
+  // Filter out all staged files that already exist on Cloudflare R2
+  const handleFilterOutStagedDuplicates = () => {
+    let removedCount = 0;
+    const seenInStaged: StagedFile[] = [];
+    const kept: StagedFile[] = [];
+
+    for (const item of stagedFiles) {
+      const dupInStaged = seenInStaged.some(s => areTracksDuplicate(s, item));
+      const matchedCatalog = findDuplicateTrack(item, tracks);
+      const alreadyOnR2 = Boolean(matchedCatalog && isR2AudioUrl(matchedCatalog.audioUrl));
+
+      if (dupInStaged || alreadyOnR2) {
+        removedCount++;
+        URL.revokeObjectURL(item.objectUrl);
+      } else {
+        seenInStaged.push(item);
+        kept.push(item);
+      }
+    }
+
+    setStagedFiles(kept);
+    if (removedCount > 0) {
+      setUploadSuccessToast(`Đã lọc bỏ ${removedCount} bài hát bị trùng khỏi danh sách tải lên!`);
+      setTimeout(() => setUploadSuccessToast(null), 4000);
     }
   };
 
@@ -338,9 +426,43 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         );
       }
 
-      const totalCount = stagedFiles.length;
+      // Filter duplicates before uploading
+      const itemsToUpload: Array<{ staged: StagedFile; existingMatch: Track | null }> = [];
+      let skippedDuplicateCount = 0;
+
+      for (const item of stagedFiles) {
+        const dupInUploadBatch = itemsToUpload.some(u =>
+          areTracksDuplicate(u.staged, item)
+        );
+        if (dupInUploadBatch) {
+          skippedDuplicateCount++;
+          succeededIds.add(item.id);
+          continue;
+        }
+
+        const existingMatch = findDuplicateTrack(item, [...addedTracksAll, ...tracks]);
+        const alreadyOnR2 = Boolean(existingMatch && isR2AudioUrl(existingMatch.audioUrl));
+
+        if (alreadyOnR2 && autoSkipDuplicates) {
+          skippedDuplicateCount++;
+          succeededIds.add(item.id);
+          continue;
+        }
+
+        itemsToUpload.push({ staged: item, existingMatch });
+      }
+
+      if (itemsToUpload.length === 0) {
+        setUploadSuccessToast(
+          `Tất cả ${skippedDuplicateCount} bài hát đã có sẵn trên Cloudflare R2 nên được tự động bỏ qua!`
+        );
+        setTimeout(() => setUploadSuccessToast(null), 4000);
+        return;
+      }
+
+      const totalCount = itemsToUpload.length;
       for (let i = 0; i < totalCount; i++) {
-        const item = stagedFiles[i];
+        const { staged: item, existingMatch } = itemsToUpload[i];
         setUploadProgressText(
           `Đang tải lên Cloudflare R2 (${i + 1}/${totalCount}): ${item.title}...`
         );
@@ -354,16 +476,24 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         setUploadProgressText(
           `Đang lưu bài hát (${i + 1}/${totalCount}): ${item.title}...`
         );
+        const preservedCover =
+          existingMatch?.coverUrl &&
+          !existingMatch.coverUrl.includes('photo-1511671782779-c97d3d27a1d4')
+            ? existingMatch.coverUrl
+            : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
+
         const [savedTrack] = await musicApi.addBatchTracks([
           {
-            title: item.title.trim(),
-            artist: item.artist.trim() || 'Nghệ sĩ chưa rõ',
-            album: item.album.trim(),
+            id: existingMatch?.id,
+            title: existingMatch?.title || item.title.trim(),
+            artist: existingMatch?.artist || item.artist.trim() || 'Nghệ sĩ chưa rõ',
+            album: existingMatch?.album || item.album.trim(),
             audioUrl: finalAudioUrl,
-            genre: item.genre,
-            duration: item.duration,
-            bpm: item.bpm,
-            mood: item.mood,
+            genre: item.genre || existingMatch?.genre,
+            duration: item.duration || existingMatch?.duration,
+            bpm: item.bpm ?? existingMatch?.bpm,
+            mood: item.mood || existingMatch?.mood,
+            plays: existingMatch?.plays ?? 0,
             aiClassified: item.aiClassified,
             aiReason:
               item.aiReason ||
@@ -371,8 +501,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 ? 'Lưu trữ trên Cloudflare R2 CDN'
                 : 'Tải lên bởi quản trị viên'),
             lyricsText: item.lyricsText,
-            coverUrl:
-              'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+            lyrics: !item.lyricsText?.trim() ? existingMatch?.lyrics : undefined,
+            syncedLyrics: !item.lyricsText?.trim() ? existingMatch?.syncedLyrics : undefined,
+            plainLyrics: !item.lyricsText?.trim() ? existingMatch?.plainLyrics : undefined,
+            lyricsMode: !item.lyricsText?.trim() ? existingMatch?.lyricsMode : undefined,
+            spotifyTrackId: existingMatch?.spotifyTrackId,
+            spotifyUrl: existingMatch?.spotifyUrl,
+            coverUrl: preservedCover,
           },
         ]);
 
@@ -382,10 +517,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         succeededIds.add(item.id);
       }
 
+      const skipNote =
+        skippedDuplicateCount > 0
+          ? ` (Đã tự động bỏ qua ${skippedDuplicateCount} bài trùng)`
+          : '';
       setUploadSuccessToast(
-        `Đã lưu thành công ${addedTracksAll.length} bài hát lên Cloudflare R2 & kho nhạc Soundly!`
+        `Đã lưu thành công ${addedTracksAll.length} bài hát lên Cloudflare R2!${skipNote}`
       );
-      setTimeout(() => setUploadSuccessToast(null), 4000);
+      setTimeout(() => setUploadSuccessToast(null), 4500);
     } catch (err: unknown) {
       console.error(err);
       const msg = err instanceof Error ? err.message : 'Tải lên thất bại. Vui lòng thử lại.';
@@ -396,7 +535,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       );
     } finally {
       if (addedTracksAll.length > 0) {
-        onTracksUpdated([...addedTracksAll, ...tracks]);
+        const { deduped } = deduplicateTracksList([...addedTracksAll, ...tracks]);
+        onTracksUpdated(deduped);
       }
       if (succeededIds.size > 0) {
         setStagedFiles(prev => prev.filter(item => !succeededIds.has(item.id)));
@@ -495,12 +635,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       }
 
       setSpotflowNotice({
-        type: 'success',
-        message: `Hoàn tất đồng bộ SpotFlow: Thêm mới ${result.addedCount} bài, cập nhật cover/lyrics ${result.updatedCount} bài, bỏ qua ${result.skippedCount} bài trùng.`,
+        type: result.failedAudioCount > 0 && result.addedCount === 0 && result.updatedCount === 0 ? 'error' : 'success',
+        message:
+          result.failedAudioCount > 0
+            ? `Đồng bộ SpotFlow: Thêm ${result.addedCount} bài, cập nhật ${result.updatedCount} bài, bỏ qua ${result.skippedCount} bài, lỗi tải MP3 ${result.failedAudioCount} bài (file trên SpotFlow/Render có thể đã hết hạn 404).`
+            : `Hoàn tất đồng bộ SpotFlow: Thêm mới ${result.addedCount} bài, cập nhật cover/lyrics ${result.updatedCount} bài, bỏ qua ${result.skippedCount} bài trùng.`,
         detail: {
           addedCount: result.addedCount,
           updatedCount: result.updatedCount,
           skippedCount: result.skippedCount,
+          failedAudioCount: result.failedAudioCount,
+          failedAudioMessages: result.failedAudioMessages,
         },
       });
     } catch (err: unknown) {
@@ -877,6 +1022,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             </p>
           </div>
 
+          {expiredSourceTracks.length > 0 && (
+            <div className="p-3.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-amber-100">
+                  Phát hiện {expiredSourceTracks.length}/{tracks.length} bài hát đang trỏ về link tạm của SpotFlow/Render (có thể đã hết hạn 404)
+                </p>
+                <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                  Hãy bật tùy chọn &quot;Tải file MP3 + ảnh bìa lưu vĩnh viễn sang Cloudflare R2&quot; và bấm <b>Đồng bộ ngay từ SpotFlow</b> nếu file vẫn còn trên SpotFlow, hoặc tải trực tiếp tệp MP3 ở tab &quot;Tải nhạc hàng loạt&quot;.
+                </p>
+              </div>
+            </div>
+          )}
+
           {spotflowNotice && (
             <div
               className={`p-3.5 rounded-xl border text-xs space-y-2 ${
@@ -894,16 +1053,31 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span>{spotflowNotice.message}</span>
               </div>
               {spotflowNotice.detail && (
-                <div className="flex flex-wrap gap-2 pl-6 text-[11px]">
-                  <span className="px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-200 font-bold">
-                    Thêm mới: {spotflowNotice.detail.addedCount}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-[#1c2852] text-[#f7f5f0] font-semibold">
-                    Cập nhật thiếu cover/lyrics: {spotflowNotice.detail.updatedCount}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-[#0d142c] text-[#a3aed0]">
-                    Bỏ qua trùng lặp: {spotflowNotice.detail.skippedCount}
-                  </span>
+                <div className="space-y-1.5 pl-6">
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="px-2 py-0.5 rounded bg-emerald-900/60 text-emerald-200 font-bold">
+                      Thêm mới: {spotflowNotice.detail.addedCount}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-[#1c2852] text-[#f7f5f0] font-semibold">
+                      Cập nhật R2/cover/lyrics: {spotflowNotice.detail.updatedCount}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-[#0d142c] text-[#a3aed0]">
+                      Bỏ qua trùng lặp: {spotflowNotice.detail.skippedCount}
+                    </span>
+                    {Boolean(spotflowNotice.detail.failedAudioCount) && (
+                      <span className="px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 font-bold">
+                        Lỗi tải MP3 nguồn: {spotflowNotice.detail.failedAudioCount}
+                      </span>
+                    )}
+                  </div>
+                  {spotflowNotice.detail.failedAudioMessages &&
+                    spotflowNotice.detail.failedAudioMessages.length > 0 && (
+                      <ul className="text-[11px] text-amber-200/90 list-disc pl-4 space-y-0.5">
+                        {spotflowNotice.detail.failedAudioMessages.map((msg, idx) => (
+                          <li key={idx}>{msg}</li>
+                        ))}
+                      </ul>
+                    )}
                 </div>
               )}
             </div>
@@ -1068,177 +1242,280 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
 
           {/* Staged Files Preview List */}
-          {stagedFiles.length > 0 && (
-            <div className="p-6 rounded-2xl bg-[#141d3d] border border-[#222f5e]">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                <div>
-                  <h4 className="text-sm font-bold text-[#f7f5f0] flex items-center gap-2">
-                    <span>Danh sách file sẵn sàng tải lên</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#f47b64] text-[#070b1a] font-extrabold">
-                      {stagedFiles.length} bài
-                    </span>
-                    {isClassifyingAI && (
-                      <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-[#f47b64]/15 text-[#f47b64] border border-[#f47b64]/35">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        AI đang phân loại...
+          {stagedFiles.length > 0 && (() => {
+            const stagedDuplicateAnalysis = stagedFiles.map((item, idx) => {
+              const dupInEarlierStaged = stagedFiles
+                .slice(0, idx)
+                .some(prev => areTracksDuplicate(prev, item));
+              const matchedCatalog = findDuplicateTrack(item, tracks);
+              const isAlreadyOnR2 = Boolean(
+                matchedCatalog && isR2AudioUrl(matchedCatalog.audioUrl)
+              );
+              const isUpgradeForExpired = Boolean(
+                matchedCatalog && !isR2AudioUrl(matchedCatalog.audioUrl)
+              );
+              return {
+                item,
+                matchedCatalog,
+                isDuplicateToFilter: dupInEarlierStaged || isAlreadyOnR2,
+                isUpgradeForExpired,
+              };
+            });
+
+            const duplicateCount = stagedDuplicateAnalysis.filter(
+              x => x.isDuplicateToFilter
+            ).length;
+            const upgradeCount = stagedDuplicateAnalysis.filter(
+              x => !x.isDuplicateToFilter && x.isUpgradeForExpired
+            ).length;
+
+            return (
+              <div className="p-6 rounded-2xl bg-[#141d3d] border border-[#222f5e] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-[#f7f5f0] flex flex-wrap items-center gap-2">
+                      <span>Danh sách file sẵn sàng tải lên</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#f47b64] text-[#070b1a] font-extrabold">
+                        {stagedFiles.length} bài
                       </span>
-                    )}
-                  </h4>
-                  <p className="text-[11px] text-[#a3aed0] mt-0.5">
-                    Kiểm tra lại tên bài hát, nghệ sĩ và thể loại mà AI đã phân loại trước khi lưu
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => runAIClassificationForStaged(stagedFiles)}
-                    disabled={isClassifyingAI || isUploading}
-                    className="px-3.5 py-2 rounded-full bg-[#0d142c] hover:bg-[#1c2852] border border-[#f47b64]/45 text-xs font-bold text-[#f47b64] flex items-center gap-1.5 disabled:opacity-50 transition-all"
-                  >
-                    {isClassifyingAI ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Wand2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>AI Phân loại lại</span>
-                  </button>
-
-                  <button
-                    onClick={() => setStagedFiles([])}
-                    disabled={isUploading}
-                    className="px-3 py-2 rounded-full bg-[#0d142c] hover:bg-[#1c2852] text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0]"
-                  >
-                    Hủy tất cả
-                  </button>
-
-                  <button
-                    onClick={handleExecuteBatchUpload}
-                    disabled={isUploading || isClassifyingAI}
-                    className="px-6 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 transition-all flex items-center gap-2"
-                  >
-                    {isUploading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 stroke-[3]" />
-                    )}
-                    <span>
-                      {isUploading
-                        ? (uploadProgressText || 'Đang lưu vào kho...')
-                        : `Tải lên toàn bộ (${stagedFiles.length} file)`}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="divide-y divide-[#1e2a54] max-h-[460px] overflow-y-auto pr-1">
-                {stagedFiles.map((item, idx) => (
-                  <div key={item.id} className="py-3.5 space-y-2 text-xs">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <span className="w-6 text-center text-xs font-mono text-[#6e7ba8]">
-                          {idx + 1}
+                      {duplicateCount > 0 && (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                          {duplicateCount} bài bị trùng trên R2
                         </span>
-                        <div className="w-9 h-9 rounded-md bg-[#0d142c] flex items-center justify-center text-[#f47b64] shrink-0">
-                          <FileAudio className="w-4 h-4" />
-                        </div>
-                        <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <div>
-                            <label className="text-[10px] text-[#8d99be] font-semibold block">
-                              Tên bài hát:
-                            </label>
-                            <input
-                              type="text"
-                              value={item.title}
-                              onChange={e => handleUpdateStaged(item.id, 'title', e.target.value)}
-                              className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f7f5f0] font-semibold outline-none focus:border-[#f47b64]"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-[#8d99be] font-semibold block">
-                              Nghệ sĩ:
-                            </label>
-                            <input
-                              type="text"
-                              value={item.artist}
-                              onChange={e => handleUpdateStaged(item.id, 'artist', e.target.value)}
-                              className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64]"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-[#8d99be] font-semibold block">
-                              Thể loại:
-                            </label>
-                            <select
-                              value={item.genre}
-                              onChange={e => handleUpdateStaged(item.id, 'genre', e.target.value)}
-                              className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f47b64] font-bold outline-none focus:border-[#f47b64]"
-                            >
-                              {SPOTIFY_GENRE_NAMES.map(g => (
-                                <option key={g} value={g}>
-                                  {g}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between lg:justify-end gap-3 shrink-0 pl-9 lg:pl-0">
-                        <span className="text-[11px] font-mono text-[#8d99be]">
-                          {item.sizeFormatted}
+                      )}
+                      {upgradeCount > 0 && (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 font-bold">
+                          {upgradeCount} bài sẽ cập nhật nhạc R2 cho bài đã có
                         </span>
-                        {item.aiClassified && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-[#f47b64]/15 text-[#f47b64] font-bold border border-[#f47b64]/35">
-                            <Sparkles className="w-3 h-3" />
-                            AI: {item.genre}
-                          </span>
-                        )}
-                        <button
-                          onClick={() => handleRemoveStaged(item.id)}
-                          className="p-1.5 text-[#a3aed0] hover:text-rose-400 rounded transition-colors"
-                          title="Xóa khỏi danh sách chờ"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {item.aiReason && (
-                      <div className="pl-9 text-[11px] text-[#a3aed0] flex flex-wrap items-center gap-2">
-                        <Sparkles className="w-3 h-3 text-[#f47b64] shrink-0" />
-                        <span>{item.aiReason}</span>
-                        {item.mood && (
-                          <span className="px-1.5 py-0.5 rounded bg-[#0d142c] text-[#f7f5f0] text-[10px]">
-                            Tâm trạng: {item.mood}
-                          </span>
-                        )}
-                        {item.bpm && (
-                          <span className="px-1.5 py-0.5 rounded bg-[#0d142c] text-[#f7f5f0] text-[10px] font-mono">
-                            ~{item.bpm} BPM
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="pl-9 pt-1">
-                      <label className="text-[10px] text-[#8d99be] font-semibold block mb-1">
-                        Thêm lời bài hát (Mỗi dòng một câu):
-                      </label>
-                      <textarea
-                        rows={2}
-                        placeholder="Nhập hoặc dán lời bài hát (tuỳ chọn)..."
-                        value={item.lyricsText || ''}
-                        onChange={e => handleUpdateStaged(item.id, 'lyricsText', e.target.value)}
-                        className="w-full bg-[#0d142c] border border-[#222f5e] rounded p-2 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64] resize-y"
-                      />
-                    </div>
+                      )}
+                      {isClassifyingAI && (
+                        <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-[#f47b64]/15 text-[#f47b64] border border-[#f47b64]/35">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          AI đang phân loại...
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-[#a3aed0] mt-0.5">
+                      Kiểm tra lại tên bài hát, nghệ sĩ và lọc bỏ các bài bị trùng trước khi lưu lên Cloudflare R2
+                    </p>
                   </div>
-                ))}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {duplicateCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleFilterOutStagedDuplicates}
+                        disabled={isUploading}
+                        className="px-3.5 py-2 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-xs font-extrabold text-amber-200 flex items-center gap-1.5 transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Lọc bỏ {duplicateCount} bài trùng</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => runAIClassificationForStaged(stagedFiles)}
+                      disabled={isClassifyingAI || isUploading}
+                      className="px-3.5 py-2 rounded-full bg-[#0d142c] hover:bg-[#1c2852] border border-[#f47b64]/45 text-xs font-bold text-[#f47b64] flex items-center gap-1.5 disabled:opacity-50 transition-all"
+                    >
+                      {isClassifyingAI ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="w-3.5 h-3.5" />
+                      )}
+                      <span>AI Phân loại lại</span>
+                    </button>
+
+                    <button
+                      onClick={() => setStagedFiles([])}
+                      disabled={isUploading}
+                      className="px-3 py-2 rounded-full bg-[#0d142c] hover:bg-[#1c2852] text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0]"
+                    >
+                      Hủy tất cả
+                    </button>
+
+                    <button
+                      onClick={handleExecuteBatchUpload}
+                      disabled={isUploading || isClassifyingAI}
+                      className="px-6 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 transition-all flex items-center gap-2"
+                    >
+                      {isUploading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 stroke-[3]" />
+                      )}
+                      <span>
+                        {isUploading
+                          ? (uploadProgressText || 'Đang lưu vào kho...')
+                          : `Tải lên toàn bộ (${
+                              autoSkipDuplicates
+                                ? Math.max(0, stagedFiles.length - duplicateCount)
+                                : stagedFiles.length
+                            } file)`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Duplicate Filter Bar */}
+                <div className="p-3 rounded-xl bg-[#0d142c] border border-[#222f5e] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <label className="flex items-center gap-2 cursor-pointer text-[#f7f5f0] font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={autoSkipDuplicates}
+                      onChange={e => setAutoSkipDuplicates(e.target.checked)}
+                      className="w-4 h-4 rounded accent-[#f47b64]"
+                    />
+                    <span>Tự động bỏ qua bài đã có trên Cloudflare R2 khi tải lên</span>
+                  </label>
+                  <span className="text-[11px] text-[#8d99be]">
+                    Các bài trùng tên nhưng chưa có file MP3 trên R2 sẽ được tự động cập nhật nhạc vào bài cũ (không tạo bản sao).
+                  </span>
+                </div>
+
+                {/* Items List */}
+                <div className="divide-y divide-[#1e2a54] max-h-[460px] overflow-y-auto pr-1">
+                  {stagedDuplicateAnalysis.map(
+                    ({ item, matchedCatalog, isDuplicateToFilter, isUpgradeForExpired }, idx) => (
+                      <div
+                        key={item.id}
+                        className={`py-3.5 space-y-2 text-xs ${
+                          isDuplicateToFilter ? 'opacity-75 bg-amber-950/15 px-2 rounded-lg' : ''
+                        }`}
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <span className="w-6 text-center text-xs font-mono text-[#6e7ba8]">
+                              {idx + 1}
+                            </span>
+                            <div className="w-9 h-9 rounded-md bg-[#0d142c] flex items-center justify-center text-[#f47b64] shrink-0">
+                              <FileAudio className="w-4 h-4" />
+                            </div>
+                            <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[10px] text-[#8d99be] font-semibold block">
+                                  Tên bài hát:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={item.title}
+                                  onChange={e => handleUpdateStaged(item.id, 'title', e.target.value)}
+                                  className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f7f5f0] font-semibold outline-none focus:border-[#f47b64]"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-[#8d99be] font-semibold block">
+                                  Nghệ sĩ:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={item.artist}
+                                  onChange={e => handleUpdateStaged(item.id, 'artist', e.target.value)}
+                                  className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64]"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-[#8d99be] font-semibold block">
+                                  Thể loại:
+                                </label>
+                                <select
+                                  value={item.genre}
+                                  onChange={e => handleUpdateStaged(item.id, 'genre', e.target.value)}
+                                  className="w-full bg-[#0d142c] border border-[#222f5e] rounded px-2 py-1 text-xs text-[#f47b64] font-bold outline-none focus:border-[#f47b64]"
+                                >
+                                  {SPOTIFY_GENRE_NAMES.map(g => (
+                                    <option key={g} value={g}>
+                                      {g}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between lg:justify-end gap-2 shrink-0 pl-9 lg:pl-0">
+                            {isDuplicateToFilter && (
+                              <span
+                                title={
+                                  matchedCatalog
+                                    ? `Trùng với: ${matchedCatalog.title} - ${matchedCatalog.artist}`
+                                    : 'Trùng trong danh sách chờ'
+                                }
+                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                              >
+                                <AlertCircle className="w-3 h-3" />
+                                Trùng bài đã có trên R2
+                              </span>
+                            )}
+                            {!isDuplicateToFilter && isUpgradeForExpired && (
+                              <span
+                                title={
+                                  matchedCatalog
+                                    ? `Sẽ cập nhật nhạc R2 cho: ${matchedCatalog.title} - ${matchedCatalog.artist}`
+                                    : ''
+                                }
+                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/35"
+                              >
+                                <CheckCircle2 className="w-3 h-3" />
+                                Cập nhật nhạc R2 cho bài cũ
+                              </span>
+                            )}
+                            <span className="text-[11px] font-mono text-[#8d99be]">
+                              {item.sizeFormatted}
+                            </span>
+                            {item.aiClassified && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-[#f47b64]/15 text-[#f47b64] font-bold border border-[#f47b64]/35">
+                                <Sparkles className="w-3 h-3" />
+                                AI: {item.genre}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => handleRemoveStaged(item.id)}
+                              className="p-1.5 text-[#a3aed0] hover:text-rose-400 rounded transition-colors"
+                              title="Xóa khỏi danh sách chờ"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {item.aiReason && (
+                          <div className="pl-9 text-[11px] text-[#a3aed0] flex flex-wrap items-center gap-2">
+                            <Sparkles className="w-3 h-3 text-[#f47b64] shrink-0" />
+                            <span>{item.aiReason}</span>
+                            {item.mood && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#0d142c] text-[#f7f5f0] text-[10px]">
+                                Tâm trạng: {item.mood}
+                              </span>
+                            )}
+                            {item.bpm && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#0d142c] text-[#f7f5f0] text-[10px] font-mono">
+                                ~{item.bpm} BPM
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="pl-9 pt-1">
+                          <label className="text-[10px] text-[#8d99be] font-semibold block mb-1">
+                            Thêm lời bài hát (Mỗi dòng một câu):
+                          </label>
+                          <textarea
+                            rows={2}
+                            placeholder="Nhập hoặc dán lời bài hát (tuỳ chọn)..."
+                            value={item.lyricsText || ''}
+                            onChange={e => handleUpdateStaged(item.id, 'lyricsText', e.target.value)}
+                            className="w-full bg-[#0d142c] border border-[#222f5e] rounded p-2 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64] resize-y"
+                          />
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -1370,6 +1647,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             </div>
           </div>
 
+          {expiredSourceTracks.length > 0 && (
+            <div className="mb-4 p-3.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-amber-100">
+                  Có {expiredSourceTracks.length} bài hát đang dùng link tạm từ SpotFlow/Render (không phát được nếu server Render đã xóa file)
+                </p>
+                <p className="text-[11px] text-amber-200/90 mt-0.5">
+                  Chỉ các bài có nhãn xanh lá hoặc không có cảnh báo mới đã được lưu cố định trên Cloudflare R2. Bạn có thể đồng bộ lại SpotFlow hoặc xóa bài lỗi và tải lên file MP3 trực tiếp.
+                </p>
+              </div>
+            </div>
+          )}
+
           {tracks.length === 0 ? (
             <div className="py-12 text-center text-[#a3aed0]">
               <Music className="w-10 h-10 mx-auto mb-2 text-[#f47b64]/45" />
@@ -1383,6 +1674,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               {tracks.map((t, idx) => {
                 const isCurrent = currentTrack?.id === t.id;
                 const isThisPlaying = isCurrent && isPlaying;
+                const hasExpiredUrl = isExpiredExternalTrack(t.audioUrl);
 
                 return (
                   <div
@@ -1426,6 +1718,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           <span className="text-[#f47b64] font-semibold">{t.genre}</span>
                           {t.aiClassified && (
                             <Sparkles className="w-3 h-3 text-[#f47b64] inline shrink-0" />
+                          )}
+                          {hasExpiredUrl && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
+                              Chưa lưu R2
+                            </span>
                           )}
                         </div>
                       </div>

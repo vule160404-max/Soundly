@@ -61,6 +61,8 @@ export interface IngestSpotflowResult {
   addedCount: number;
   updatedCount: number;
   skippedCount: number;
+  failedAudioCount: number;
+  failedAudioMessages: string[];
   tracks: R2StoredTrack[];
 }
 
@@ -325,12 +327,56 @@ function normalizeTextKey(val?: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+function normalizeCoreTitle(rawTitle?: string): string {
+  const raw = (rawTitle || '')
+    .replace(/(?:\(|\[)?\b(?:feat\.?|ft\.?|featuring)\s+[^)\]]+(?:\)|\])?/gi, ' ')
+    .replace(/\b(?:official\s+mv|official\s+video|official\s+audio|lyric\s+video|320kbps|128kbps)\b/gi, ' ')
+    .replace(/\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i, ' ')
+    .replace(/^[0-9]{1,3}[\s._-]+/, '');
+  return normalizeTextKey(raw) || normalizeTextKey(rawTitle);
+}
+
+function extractCanonicalArtistTokens(rawArtist?: string, rawTitle?: string): string[] {
+  const featMatches: string[] = [];
+  const featRegex = /(?:\(|\[)?\b(?:feat\.?|ft\.?|featuring)\s+([^)\]]+)(?:\)|\])?/gi;
+  let m: RegExpExecArray | null;
+  const titleStr = rawTitle || '';
+  while ((m = featRegex.exec(titleStr)) !== null) {
+    if (m[1]) featMatches.push(m[1]);
+  }
+  const combined = [rawArtist || '', ...featMatches].join(', ');
+  const placeholders = new Set(['nghe si chua ro', 'nghe si spotflow', 'unknown artist']);
+  const tokens = combined
+    .split(/(?:,|&|;|\/|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bwith\b|\band\b|\bva\b)/i)
+    .map(p => normalizeTextKey(p))
+    .filter(p => p.length > 0 && !placeholders.has(p));
+  return Array.from(new Set(tokens)).sort();
+}
+
 function makeTitleArtistKey(title?: string, artist?: string): string {
-  return `${normalizeTextKey(title)}::${normalizeTextKey(artist)}`;
+  const coreTitle = normalizeCoreTitle(title);
+  const artistKey = extractCanonicalArtistTokens(artist, title).join('|');
+  return `${coreTitle}::${artistKey}`;
+}
+
+function areArtistsCompatible(tokensA: string[], tokensB: string[]): boolean {
+  if (tokensA.length === 0 || tokensB.length === 0) return true;
+  if (tokensA.join('|') === tokensB.join('|')) return true;
+  for (const a of tokensA) {
+    for (const b of tokensB) {
+      if (a === b) return true;
+      if (a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isMissingOrDefaultCover(url?: string | null): boolean {
@@ -352,6 +398,23 @@ function hasUsableLyrics(track: ExistingTrackLookup): boolean {
   return false;
 }
 
+export function isR2StoredUrl(url?: string | null, publicDomain?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes('/api/r2/stream')) return true;
+  if (trimmed.includes('.r2.dev/') || trimmed.includes('.r2.cloudflarestorage.com/')) {
+    return true;
+  }
+  if (publicDomain) {
+    const cleanDomain = publicDomain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (cleanDomain && trimmed.includes(cleanDomain)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function downloadAudioBuffer(
   audioUrl: string,
   apiKey?: string
@@ -361,12 +424,18 @@ async function downloadAudioBuffer(
     headers['X-API-Key'] = apiKey.trim();
     headers['Authorization'] = `Bearer ${apiKey.trim()}`;
   }
-  const res = await fetch(audioUrl, { headers });
+  const res = await fetch(audioUrl, {
+    headers,
+    signal: AbortSignal.timeout(15000),
+  });
   if (!res.ok) {
     throw new Error(`Không thể tải tệp MP3 từ SpotFlow (HTTP ${res.status}).`);
   }
   const arrayBuffer = await res.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length === 0) {
+    throw new Error('Tệp MP3 tải về từ SpotFlow bị rỗng.');
+  }
   const contentType = res.headers.get('content-type') || 'audio/mpeg';
   return { buffer, contentType };
 }
@@ -436,14 +505,29 @@ export async function ingestSpotflowTracks(params: {
 
   const bySpotifyId = new Map<string, ExistingTrackLookup>();
   const byTitleArtist = new Map<string, ExistingTrackLookup>();
+  const byCoreTitle = new Map<string, ExistingTrackLookup[]>();
 
   const registerLookup = (track: ExistingTrackLookup) => {
     if (track.spotifyTrackId) {
       bySpotifyId.set(track.spotifyTrackId.trim(), track);
     }
     const taKey = makeTitleArtistKey(track.title, track.artist);
-    if (taKey !== '::') {
-      byTitleArtist.set(taKey, track);
+    if (!taKey.startsWith('::')) {
+      const prev = byTitleArtist.get(taKey);
+      if (!prev || isR2StoredUrl(track.audioUrl, r2Config.publicDomain)) {
+        byTitleArtist.set(taKey, track);
+      }
+    }
+    const coreTitle = normalizeCoreTitle(track.title);
+    if (coreTitle) {
+      const list = byCoreTitle.get(coreTitle) || [];
+      const existingIdx = list.findIndex(item => item.id === track.id);
+      if (existingIdx !== -1) {
+        list[existingIdx] = track;
+      } else {
+        list.push(track);
+      }
+      byCoreTitle.set(coreTitle, list);
     }
   };
 
@@ -451,9 +535,37 @@ export async function ingestSpotflowTracks(params: {
     registerLookup(t);
   }
 
+  const findMatchingExisting = (
+    spotifyTrackId: string | undefined,
+    title: string,
+    artist: string
+  ): ExistingTrackLookup | undefined => {
+    if (spotifyTrackId && bySpotifyId.has(spotifyTrackId)) {
+      return bySpotifyId.get(spotifyTrackId);
+    }
+    const taKey = makeTitleArtistKey(title, artist);
+    if (byTitleArtist.has(taKey)) {
+      return byTitleArtist.get(taKey);
+    }
+    const coreTitle = normalizeCoreTitle(title);
+    const sameTitleCandidates = coreTitle ? byCoreTitle.get(coreTitle) || [] : [];
+    if (sameTitleCandidates.length > 0) {
+      const candidateTokens = extractCanonicalArtistTokens(artist, title);
+      for (const cand of sameTitleCandidates) {
+        const candTokens = extractCanonicalArtistTokens(cand.artist, cand.title);
+        if (areArtistsCompatible(candidateTokens, candTokens)) {
+          return cand;
+        }
+      }
+    }
+    return undefined;
+  };
+
   const addedTracks: R2StoredTrack[] = [];
   const updatedTracks: R2StoredTrack[] = [];
   let skippedCount = 0;
+  let failedAudioCount = 0;
+  const failedAudioMessages: string[] = [];
 
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
@@ -473,27 +585,52 @@ export async function ingestSpotflowTracks(params: {
           ? Math.round(item.duration)
           : 210;
 
-    // 1. Check duplicate by spotifyTrackId first, then by normalized (title + artist)
-    const taKey = makeTitleArtistKey(title, artist);
-    const existing =
-      (spotifyTrackId ? bySpotifyId.get(spotifyTrackId) : undefined) ||
-      byTitleArtist.get(taKey);
+    // 1. Check duplicate by spotifyTrackId first, then by canonical (title + artist)
+    const existing = findMatchingExisting(spotifyTrackId, title, artist);
 
     if (existing) {
       const needsCover = isMissingOrDefaultCover(existing.coverUrl);
       const needsLyrics =
         !hasUsableLyrics(existing) ||
         (!existing.syncedLyrics && Boolean(parsedLyrics.syncedLyrics));
+      const needsR2Audio =
+        shouldSaveToR2 &&
+        Boolean(remoteAudioUrl) &&
+        !isR2StoredUrl(existing.audioUrl, r2Config.publicDomain);
 
-      if (!needsCover && !needsLyrics) {
+      if (!needsCover && !needsLyrics && !needsR2Audio) {
         skippedCount++;
         continue;
       }
 
+      let updatedAudioUrl = existing.audioUrl || remoteAudioUrl;
+      let downloadedMp3ForExisting: Buffer | null = null;
+
+      if (needsR2Audio && remoteAudioUrl) {
+        try {
+          const downloaded = await downloadAudioBuffer(remoteAudioUrl, apiKey);
+          downloadedMp3ForExisting = downloaded.buffer;
+          const uploadName = item.fileName || `${fileStem}.mp3`;
+          const r2Audio = await uploadBufferToR2(
+            downloadedMp3ForExisting,
+            uploadName,
+            downloaded.contentType
+          );
+          updatedAudioUrl = r2Audio.audioUrl;
+        } catch (err) {
+          failedAudioCount++;
+          const reason = err instanceof Error ? err.message : 'Lỗi tải MP3';
+          if (failedAudioMessages.length < 5) {
+            failedAudioMessages.push(`${title}: ${reason}`);
+          }
+          console.warn('[SpotFlow] Could not archive existing track MP3 to R2:', err);
+        }
+      }
+
       let updatedCoverUrl = existing.coverUrl || DEFAULT_COVER_URL;
       if (needsCover) {
-        let mp3BufferForCover: Buffer | null = null;
-        if (!remoteCoverUrl && remoteAudioUrl) {
+        let mp3BufferForCover: Buffer | null = downloadedMp3ForExisting;
+        if (!mp3BufferForCover && !remoteCoverUrl && remoteAudioUrl) {
           try {
             const downloaded = await downloadAudioBuffer(remoteAudioUrl, apiKey);
             mp3BufferForCover = downloaded.buffer;
@@ -527,13 +664,14 @@ export async function ingestSpotflowTracks(params: {
             ? 'plain'
             : existing.lyricsMode || 'none';
 
+      const audioImproved = updatedAudioUrl !== existing.audioUrl;
       const coverImproved = updatedCoverUrl !== existing.coverUrl;
       const lyricsImproved =
         nextSyncedLyrics !== existing.syncedLyrics ||
         nextPlainLyrics !== existing.plainLyrics ||
         (!hasUsableLyrics(existing) && (nextLyrics.length > 0 || Boolean(nextPlainLyrics)));
 
-      if (!coverImproved && !lyricsImproved) {
+      if (!audioImproved && !coverImproved && !lyricsImproved) {
         skippedCount++;
         continue;
       }
@@ -543,7 +681,7 @@ export async function ingestSpotflowTracks(params: {
         title: existing.title || title,
         artist: existing.artist || artist,
         album: existing.album || album,
-        audioUrl: (existing.audioUrl || remoteAudioUrl).slice(0, 2000),
+        audioUrl: updatedAudioUrl.slice(0, 2000),
         coverUrl: updatedCoverUrl.slice(0, 2000),
         duration: existing.duration || durationSecs,
         genre: (existing.genre || 'Pop').slice(0, 100),
@@ -551,7 +689,10 @@ export async function ingestSpotflowTracks(params: {
         bpm: existing.bpm ?? (item.bitrate === 320 ? 120 : 110),
         mood: (existing.mood || 'Sôi động & Chất lượng cao').slice(0, 150),
         aiClassified: existing.aiClassified ?? true,
-        aiReason: (existing.aiReason || `Cập nhật metadata từ ${sourceLabel}`).slice(0, 500),
+        aiReason: (audioImproved && shouldSaveToR2
+          ? `Đã lưu trữ bản nhạc lên Cloudflare R2 từ ${sourceLabel}`
+          : existing.aiReason || `Cập nhật metadata từ ${sourceLabel}`
+        ).slice(0, 500),
         lyrics: nextLyrics,
         plays: existing.plays ?? 0,
         ...(spotifyTrackId || existing.spotifyTrackId
@@ -573,6 +714,7 @@ export async function ingestSpotflowTracks(params: {
     // 2. New track: download MP3 binary & cover binary (or extract ID3 APIC) and upload to R2
     let finalAudioUrl = remoteAudioUrl;
     let downloadedMp3Buffer: Buffer | null = null;
+    let audioUploadFailed = false;
 
     if (remoteAudioUrl && (shouldSaveToR2 || !remoteCoverUrl)) {
       try {
@@ -588,8 +730,21 @@ export async function ingestSpotflowTracks(params: {
           finalAudioUrl = r2Audio.audioUrl;
         }
       } catch (err) {
+        audioUploadFailed = true;
+        if (shouldSaveToR2) {
+          failedAudioCount++;
+          const reason = err instanceof Error ? err.message : 'Lỗi tải MP3';
+          if (failedAudioMessages.length < 5) {
+            failedAudioMessages.push(`${title}: ${reason}`);
+          }
+        }
         console.warn('[SpotFlow] Could not download/upload MP3 to R2:', err);
       }
+    }
+
+    // Never persist broken expired external links when saveToR2 was required and audio failed
+    if (shouldSaveToR2 && audioUploadFailed && !isR2StoredUrl(finalAudioUrl, r2Config.publicDomain)) {
+      continue;
     }
 
     const finalCoverUrl = await persistCoverForTrack({
@@ -642,6 +797,8 @@ export async function ingestSpotflowTracks(params: {
     addedCount: addedTracks.length,
     updatedCount: updatedTracks.length,
     skippedCount,
+    failedAudioCount,
+    failedAudioMessages,
     tracks: [...addedTracks, ...updatedTracks],
   };
 }

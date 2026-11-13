@@ -10,6 +10,7 @@ import {
   Sparkles,
   Trash2
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
 import { splitArtistNames } from '../utils/artistSync';
@@ -18,6 +19,7 @@ interface TrackTableProps {
   tracks: Track[];
   onPlayList?: (tracks: Track[], startIndex: number) => void;
   showCover?: boolean;
+  showRankAndPlays?: boolean;
   customPlaylistId?: string;
   onSelectArtist?: (artistName: string) => void;
 }
@@ -26,6 +28,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   tracks,
   onPlayList,
   showCover = true,
+  showRankAndPlays = false,
   customPlaylistId,
   onSelectArtist,
 }) => {
@@ -51,6 +54,20 @@ export const TrackTable: React.FC<TrackTableProps> = ({
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const formatPlays = (plays?: number) => {
+    const count = Math.max(0, Number(plays) || 0);
+    return `${count.toLocaleString('vi-VN')} lượt nghe`;
+  };
+
+  const getRankColorClass = (idx: number, isCurrent: boolean) => {
+    if (isCurrent) return 'text-[#f47b64] font-extrabold';
+    if (!showRankAndPlays) return 'text-[#a3aed0]';
+    if (idx === 0) return 'text-[#f47b64] font-extrabold';
+    if (idx === 1) return 'text-[#f7f5f0] font-extrabold';
+    if (idx === 2) return 'text-amber-400 font-extrabold';
+    return 'text-[#7f8bb3]';
   };
 
   const handleRowClick = (track: Track, index: number) => {
@@ -89,12 +106,20 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   return (
     <div className="w-full relative select-none">
       {/* Toast notification */}
-      {addedPlaylistToast && (
-        <div className="fixed top-16 right-4 md:right-8 z-50 bg-[#f47b64] text-[#070b1a] text-xs font-bold px-4 py-2 rounded-lg shadow-xl flex items-center gap-2 animate-fade-in">
-          <Check className="w-4 h-4 text-[#070b1a] stroke-[3]" />
-          <span>{addedPlaylistToast}</span>
-        </div>
-      )}
+      <AnimatePresence>
+        {addedPlaylistToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.96 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed top-16 right-4 md:right-8 z-50 bg-[#f47b64] text-[#070b1a] text-xs font-bold px-4 py-2 rounded-lg shadow-xl flex items-center gap-2"
+          >
+            <Check className="w-4 h-4 text-[#070b1a] stroke-[3]" />
+            <span>{addedPlaylistToast}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ======================================================== */}
       {/* MOBILE LIST VIEW (Soundly Navy touch layout)             */}
@@ -113,12 +138,23 @@ export const TrackTable: React.FC<TrackTableProps> = ({
             <div
               key={`mobile-${track.id}`}
               onClick={() => handleRowClick(track, idx)}
-              className={`flex items-center justify-between p-2.5 rounded-xl active:bg-[#1c2852] transition-colors ${
+              className={`flex items-center justify-between p-2.5 rounded-xl active:bg-[#1c2852] active:scale-[0.99] transition-all duration-150 ${
                 isCurrent ? 'bg-[#1c2852]/75' : ''
               }`}
             >
-              {/* Cover Art + Info */}
-              <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+              {/* Rank (Top 50) + Cover Art + Info */}
+              <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                {showRankAndPlays && (
+                  <span
+                    className={`w-6 text-center font-mono tabular-nums text-xs shrink-0 ${getRankColorClass(
+                      idx,
+                      isCurrent
+                    )}`}
+                  >
+                    {idx + 1}
+                  </span>
+                )}
+
                 <div className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-[#141d3d]">
                   <img
                     src={track.coverUrl}
@@ -128,10 +164,10 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                   />
                   {isCurrentPlaying && (
                     <div className="absolute inset-0 bg-[#070b1a]/45 flex items-center justify-center">
-                      <div className="flex items-end gap-0.5 h-3">
-                        <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '100%', animationDelay: '0ms' }} />
-                        <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '60%', animationDelay: '150ms' }} />
-                        <span className="w-0.5 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '80%', animationDelay: '300ms' }} />
+                      <div className="flex items-end gap-0.5 h-3.5">
+                        <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '0ms' }} />
+                        <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '180ms' }} />
+                        <span className="w-0.5 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '340ms' }} />
                       </div>
                     </div>
                   )}
@@ -165,6 +201,14 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     )}
                     <span>•</span>
                     <span className="font-mono tabular-nums shrink-0">{formatDuration(track.duration)}</span>
+                    {showRankAndPlays && (
+                      <>
+                        <span>•</span>
+                        <span className="font-mono tabular-nums shrink-0 text-[#8d99be]">
+                          {(Number(track.plays) || 0).toLocaleString('vi-VN')} lượt
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -179,7 +223,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                       ? `Đã lưu trong ${savedAlbumsCount} album • Nhấn để chỉnh sửa`
                       : 'Thêm vào album trong thư viện'
                   }
-                  className={`min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center transition-colors ${
+                  className={`min-h-[40px] min-w-[40px] rounded-full flex items-center justify-center active:scale-90 transition-all duration-150 ${
                     savedAlbumsCount > 0
                       ? 'text-[#f47b64] bg-[#f47b64]/15'
                       : 'text-[#a3aed0] hover:text-[#f7f5f0] active:bg-[#162047]'
@@ -195,63 +239,69 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                 <button
                   type="button"
                   onClick={() => toggleLike(track.id)}
-                  className="min-h-[40px] min-w-[40px] flex items-center justify-center text-[#a3aed0] active:scale-125 transition-transform"
+                  className="min-h-[40px] min-w-[40px] flex items-center justify-center text-[#a3aed0] active:scale-125 transition-transform duration-150"
                 >
-                  <Heart className={`w-4 h-4 ${liked ? 'fill-[#f47b64] text-[#f47b64]' : 'text-[#6e7ba8]'}`} />
+                  <Heart className={`w-4 h-4 transition-colors ${liked ? 'fill-[#f47b64] text-[#f47b64]' : 'text-[#6e7ba8]'}`} />
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setActiveMenuTrackId(isMenuOpen ? null : track.id)}
-                  className="min-h-[40px] min-w-[36px] flex items-center justify-center text-[#a3aed0] active:text-[#f7f5f0]"
+                  className="min-h-[40px] min-w-[36px] flex items-center justify-center text-[#a3aed0] active:scale-90 active:text-[#f7f5f0] transition-all duration-150"
                 >
                   <MoreVertical className="w-4 h-4" />
                 </button>
 
                 {/* Mobile Dropdown Menu */}
-                {isMenuOpen && (
-                  <div
-                    className="absolute right-0 top-full mt-1 z-30 w-56 bg-[#141d3d] rounded-xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0] animate-in fade-in"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenuTrackId(null);
-                        openAlbumPicker(track);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#f47b64] font-bold hover:bg-[#1c2852] text-left min-h-[42px]"
+                <AnimatePresence>
+                  {isMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                      transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute right-0 top-full mt-1 z-30 w-56 bg-[#141d3d] rounded-xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0]"
                     >
-                      <FolderPlus className="w-4 h-4 shrink-0" />
-                      <span>Thêm vào album của bạn</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        addToQueue(track);
-                        setActiveMenuTrackId(null);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#f7f5f0] hover:bg-[#1c2852] text-left min-h-[42px]"
-                    >
-                      <ListPlus className="w-4 h-4 text-[#a3aed0]" />
-                      <span>Thêm vào hàng đợi</span>
-                    </button>
-
-                    {customPlaylistId && (
                       <button
                         type="button"
                         onClick={() => {
-                          removeTrackFromPlaylist(customPlaylistId, track.id);
+                          setActiveMenuTrackId(null);
+                          openAlbumPicker(track);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#f47b64] font-bold hover:bg-[#1c2852] text-left min-h-[42px] transition-colors"
+                      >
+                        <FolderPlus className="w-4 h-4 shrink-0" />
+                        <span>Thêm vào album của bạn</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addToQueue(track);
                           setActiveMenuTrackId(null);
                         }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-rose-400 hover:bg-[#1c2852] text-left min-h-[42px]"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#f7f5f0] hover:bg-[#1c2852] text-left min-h-[42px] transition-colors"
                       >
-                        <Trash2 className="w-4 h-4 shrink-0" />
-                        <span>Gỡ khỏi album này</span>
+                        <ListPlus className="w-4 h-4 text-[#a3aed0]" />
+                        <span>Thêm vào hàng đợi</span>
                       </button>
-                    )}
-                  </div>
-                )}
+
+                      {customPlaylistId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            removeTrackFromPlaylist(customPlaylistId, track.id);
+                            setActiveMenuTrackId(null);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-rose-400 hover:bg-[#1c2852] text-left min-h-[42px] transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4 shrink-0" />
+                          <span>Gỡ khỏi album này</span>
+                        </button>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
           );
@@ -266,8 +316,11 @@ export const TrackTable: React.FC<TrackTableProps> = ({
         <div className="grid grid-cols-12 gap-3 px-4 py-2.5 text-[11px] font-semibold text-[#a3aed0] uppercase tracking-wider border-b border-[#1e2a54]">
           <div className="col-span-1 text-center">#</div>
           <div className="col-span-4">Tiêu đề</div>
-          <div className="col-span-3">Album</div>
-          <div className="col-span-2">Thể loại</div>
+          <div className={showRankAndPlays ? 'col-span-2' : 'col-span-3'}>Album</div>
+          {showRankAndPlays && (
+            <div className="col-span-2 text-right">Lượt nghe</div>
+          )}
+          <div className={showRankAndPlays ? 'col-span-1' : 'col-span-2'}>Thể loại</div>
           <div className="col-span-2 text-right">Thao tác</div>
         </div>
 
@@ -286,7 +339,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
               <div
                 key={track.id}
                 onClick={() => handleRowClick(track, idx)}
-                className={`group grid grid-cols-12 gap-3 px-4 py-2 items-center rounded-lg cursor-pointer transition-colors text-xs ${
+                className={`group grid grid-cols-12 gap-3 px-4 py-2 items-center rounded-lg cursor-pointer transition-all duration-150 ease-out active:scale-[0.995] text-xs ${
                   isCurrent
                     ? 'bg-[#1c2852] text-[#f7f5f0]'
                     : 'hover:bg-[#141d3d] text-[#a3aed0]'
@@ -296,13 +349,18 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                 <div className="col-span-1 text-center flex items-center justify-center">
                   {isCurrentPlaying ? (
                     <div className="flex items-end gap-0.5 h-3.5">
-                      <span className="w-1 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '100%', animationDelay: '0ms' }} />
-                      <span className="w-1 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '60%', animationDelay: '150ms' }} />
-                      <span className="w-1 bg-[#f47b64] rounded-full animate-bounce" style={{ height: '80%', animationDelay: '300ms' }} />
+                      <span className="w-1 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '180ms' }} />
+                      <span className="w-1 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '340ms' }} />
                     </div>
                   ) : (
                     <>
-                      <span className={`group-hover:hidden font-mono tabular-nums ${isCurrent ? 'text-[#f47b64] font-bold' : 'text-[#a3aed0]'}`}>
+                      <span
+                        className={`group-hover:hidden font-mono tabular-nums ${getRankColorClass(
+                          idx,
+                          isCurrent
+                        )}`}
+                      >
                         {idx + 1}
                       </span>
                       <button
@@ -311,7 +369,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                           e.stopPropagation();
                           handleRowClick(track, idx);
                         }}
-                        className="hidden group-hover:flex items-center justify-center text-[#f7f5f0]"
+                        className="hidden group-hover:flex items-center justify-center text-[#f7f5f0] transition-transform active:scale-90"
                       >
                         <Play className="w-3.5 h-3.5 fill-[#f7f5f0] ml-0.5" />
                       </button>
@@ -326,7 +384,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                       src={track.coverUrl}
                       alt={track.title}
                       referrerPolicy="no-referrer"
-                      className="w-10 h-10 rounded-md object-cover shrink-0"
+                      className="w-10 h-10 rounded-md object-cover shrink-0 transition-transform duration-200 group-hover:scale-[1.03]"
                     />
                   )}
                   <div className="min-w-0">
@@ -356,13 +414,24 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                 </div>
 
                 {/* Column 3: Album */}
-                <div className="col-span-3 text-[#a3aed0] truncate group-hover:text-[#f7f5f0] transition-colors">
+                <div
+                  className={`${
+                    showRankAndPlays ? 'col-span-2' : 'col-span-3'
+                  } text-[#a3aed0] truncate group-hover:text-[#f7f5f0] transition-colors`}
+                >
                   {track.album}
                 </div>
 
+                {/* Optional Column: Play Count (Top 50) */}
+                {showRankAndPlays && (
+                  <div className="col-span-2 text-right font-mono tabular-nums text-[11px] text-[#a3aed0] group-hover:text-[#f7f5f0] transition-colors truncate">
+                    {formatPlays(track.plays)}
+                  </div>
+                )}
+
                 {/* Column 4: Genre */}
-                <div className="col-span-2">
-                  <span className="inline-flex items-center text-[11px] text-[#a3aed0] font-medium truncate">
+                <div className={showRankAndPlays ? 'col-span-1' : 'col-span-2'}>
+                  <span className="inline-flex items-center text-[11px] text-[#a3aed0] font-medium truncate max-w-full">
                     {track.genre}
                   </span>
                 </div>
@@ -380,7 +449,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                         ? `Đã lưu trong ${savedAlbumsCount} album • Nhấn để thêm/gỡ`
                         : 'Thêm vào album trong thư viện'
                     }
-                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors shrink-0 ${
+                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border active:scale-95 transition-all duration-150 shrink-0 ${
                       savedAlbumsCount > 0
                         ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45 hover:bg-[#f47b64]/25'
                         : 'bg-[#141d3d] text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:border-[#f47b64]/50'
@@ -403,7 +472,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                       toggleLike(track.id);
                     }}
                     title={liked ? 'Xóa khỏi yêu thích' : 'Lưu vào yêu thích'}
-                    className={`p-1.5 rounded-md transition-colors ${
+                    className={`p-1.5 rounded-md active:scale-125 transition-all duration-150 ${
                       liked
                         ? 'text-[#f47b64]'
                         : 'text-[#a3aed0] hover:text-[#f7f5f0] opacity-70 group-hover:opacity-100'
@@ -424,69 +493,75 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                         setActiveMenuTrackId(isMenuOpen ? null : track.id);
                       }}
                       title="Tùy chọn khác"
-                      className="p-1 rounded-md text-[#a3aed0] hover:text-[#f7f5f0] opacity-70 group-hover:opacity-100 transition-opacity"
+                      className="p-1 rounded-md text-[#a3aed0] hover:text-[#f7f5f0] opacity-70 group-hover:opacity-100 active:scale-90 transition-all duration-150"
                     >
                       <MoreHorizontal className="w-4 h-4" />
                     </button>
 
-                    {isMenuOpen && (
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute right-0 bottom-full mb-1 z-30 w-56 bg-[#141d3d] rounded-xl shadow-2xl border border-[#2b3b75] p-1.5 text-xs text-[#f7f5f0] animate-in fade-in zoom-in-95"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            addToQueue(track);
-                            setActiveMenuTrackId(null);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[#f7f5f0] hover:bg-[#1c2852] transition-colors text-left"
+                    <AnimatePresence>
+                      {isMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 4, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 4, scale: 0.96 }}
+                          transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 bottom-full mb-1 z-30 w-56 bg-[#141d3d] rounded-xl shadow-2xl border border-[#2b3b75] p-1.5 text-xs text-[#f7f5f0]"
                         >
-                          <ListPlus className="w-3.5 h-3.5 text-[#a3aed0]" />
-                          <span>Thêm vào hàng đợi</span>
-                        </button>
-
-                        {customPlaylistId && (
                           <button
                             type="button"
                             onClick={() => {
-                              removeTrackFromPlaylist(customPlaylistId, track.id);
+                              addToQueue(track);
                               setActiveMenuTrackId(null);
                             }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-rose-400 hover:bg-[#1c2852] transition-colors text-left"
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[#f7f5f0] hover:bg-[#1c2852] transition-colors text-left"
                           >
-                            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-                            <span>Gỡ khỏi album này</span>
+                            <ListPlus className="w-3.5 h-3.5 text-[#a3aed0]" />
+                            <span>Thêm vào hàng đợi</span>
                           </button>
-                        )}
 
-                        {userPlaylists.length > 0 && (
-                          <div className="mt-1 pt-1 border-t border-[#222f5e]">
-                            <p className="px-3 py-1 text-[10px] uppercase font-semibold text-[#a3aed0]">
-                              Thêm nhanh vào album:
-                            </p>
-                            <div className="max-h-36 overflow-y-auto">
-                              {userPlaylists.map((pl) => (
-                                <button
-                                  type="button"
-                                  key={pl.id}
-                                  onClick={() => handleAddToPlaylist(pl.id, track, pl.title)}
-                                  className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#1c2852] transition-colors text-left truncate"
-                                >
-                                  <div className="flex items-center gap-2 truncate">
-                                    <FolderPlus className="w-3 h-3 text-[#a3aed0] shrink-0" />
-                                    <span className="truncate">{pl.title}</span>
-                                  </div>
-                                  {pl.trackIds.includes(track.id) && (
-                                    <Check className="w-3 h-3 text-[#f47b64] shrink-0" />
-                                  )}
-                                </button>
-                              ))}
+                          {customPlaylistId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                removeTrackFromPlaylist(customPlaylistId, track.id);
+                                setActiveMenuTrackId(null);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-rose-400 hover:bg-[#1c2852] transition-colors text-left"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Gỡ khỏi album này</span>
+                            </button>
+                          )}
+
+                          {userPlaylists.length > 0 && (
+                            <div className="mt-1 pt-1 border-t border-[#222f5e]">
+                              <p className="px-3 py-1 text-[10px] uppercase font-semibold text-[#a3aed0]">
+                                Thêm nhanh vào album:
+                              </p>
+                              <div className="max-h-36 overflow-y-auto">
+                                {userPlaylists.map((pl) => (
+                                  <button
+                                    type="button"
+                                    key={pl.id}
+                                    onClick={() => handleAddToPlaylist(pl.id, track, pl.title)}
+                                    className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#1c2852] transition-colors text-left truncate"
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
+                                      <FolderPlus className="w-3 h-3 text-[#a3aed0] shrink-0" />
+                                      <span className="truncate">{pl.title}</span>
+                                    </div>
+                                    {pl.trackIds.includes(track.id) && (
+                                      <Check className="w-3 h-3 text-[#f47b64] shrink-0" />
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
               </div>

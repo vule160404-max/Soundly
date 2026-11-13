@@ -12,6 +12,11 @@ import {
   SPOTIFY_GENRE_NAMES,
 } from './src/data/mockTracks';
 import { Track, Playlist, LyricLine } from './src/types/music';
+import {
+  areTracksDuplicate,
+  deduplicateTracksList,
+  mergeDuplicateTrackPair,
+} from './src/utils/trackDedupe';
 import multer from 'multer';
 import {
   loadR2Config,
@@ -26,6 +31,7 @@ import {
   getR2CatalogTracks,
   upsertR2CatalogTracks,
   updateR2CatalogTrack,
+  incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
   getR2ObjectRange,
 } from './server-r2';
@@ -431,16 +437,16 @@ async function startServer() {
 
     if (isR2Configured()) {
       const r2Tracks = await getR2CatalogTracks();
-      const existingIds = new Set(results.map(t => t.id));
-      const existingUrls = new Set(results.map(t => t.audioUrl));
       for (const rt of r2Tracks) {
-        if (!existingIds.has(rt.id) && !existingUrls.has(rt.audioUrl)) {
+        const dupIdx = results.findIndex(existing => areTracksDuplicate(existing, rt));
+        if (dupIdx === -1) {
           results.push(rt);
-          existingIds.add(rt.id);
-          existingUrls.add(rt.audioUrl);
+        } else {
+          results[dupIdx] = mergeDuplicateTrackPair(results[dupIdx], rt);
         }
       }
     }
+    results = deduplicateTracksList(results).deduped;
 
     if (genre && typeof genre === 'string' && genre !== 'all') {
       results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
@@ -539,12 +545,50 @@ async function startServer() {
       return newTrack;
     });
 
-    tracks.unshift(...addedTracks);
+    tracks = deduplicateTracksList([...addedTracks, ...tracks]).deduped;
     persistTracks();
     if (isR2Configured()) {
       await upsertR2CatalogTracks(addedTracks);
     }
     res.status(201).json({ count: addedTracks.length, tracks: addedTracks });
+  });
+
+  app.post('/api/tracks/play', async (req, res) => {
+    try {
+      const trackId = String(req.body?.trackId || req.body?.id || '').trim();
+      if (!trackId) {
+        return res.status(400).json({ error: 'trackId is required' });
+      }
+
+      let memPlays: number | null = null;
+      const idx = tracks.findIndex(t => t.id === trackId);
+      if (idx !== -1) {
+        memPlays = Math.max(0, Number(tracks[idx].plays) || 0) + 1;
+        tracks[idx] = { ...tracks[idx], plays: memPlays };
+        persistTracks();
+      }
+
+      const r2Plays = isR2Configured()
+        ? await incrementR2CatalogTrackPlays(trackId)
+        : null;
+
+      const resolvedPlays = Math.max(memPlays ?? 0, r2Plays ?? 0);
+      if (idx !== -1 && resolvedPlays > (memPlays ?? 0)) {
+        tracks[idx] = { ...tracks[idx], plays: resolvedPlays };
+        persistTracks();
+      }
+
+      res.json({
+        success: true,
+        id: trackId,
+        plays: r2Plays !== null || memPlays !== null ? resolvedPlays : null,
+      });
+    } catch (err: unknown) {
+      console.error('Play increment error:', err);
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to record play.',
+      });
+    }
   });
 
   app.patch('/api/tracks/:id', async (req, res) => {
@@ -738,6 +782,8 @@ async function startServer() {
         addedCount: result.addedCount,
         updatedCount: result.updatedCount,
         skippedCount: result.skippedCount,
+        failedAudioCount: result.failedAudioCount,
+        failedAudioMessages: result.failedAudioMessages,
         addedTracks: result.addedTracks,
         updatedTracks: result.updatedTracks,
         tracks: result.tracks,
@@ -846,7 +892,11 @@ async function startServer() {
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        watch: null,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

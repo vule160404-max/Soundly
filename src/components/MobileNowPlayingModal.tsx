@@ -17,8 +17,10 @@ import {
   VolumeX,
   Share2,
   FolderPlus,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 
 interface MobileNowPlayingModalProps {
@@ -55,10 +57,9 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
     setIsQueueOpen,
     setIsVisualizerOpen,
     openAlbumPicker,
-    userPlaylists
+    userPlaylists,
+    audioError
   } = usePlayer();
-
-  if (!isOpen || !currentTrack) return null;
 
   const formatTime = (secs: number) => {
     if (!secs || isNaN(secs)) return '0:00';
@@ -67,10 +68,19 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const liked = isLiked(currentTrack.id);
+  const liked = currentTrack ? isLiked(currentTrack.id) : false;
 
   return (
-    <div className="fixed inset-0 z-50 bg-gradient-to-b from-[#162252] via-[#0d142c] to-[#070b1a] flex flex-col md:hidden text-[#f7f5f0] animate-in slide-in-from-bottom duration-300 select-none">
+    <AnimatePresence>
+      {isOpen && currentTrack && (
+        <motion.div
+          key="mobile-now-playing"
+          initial={{ y: '100%', opacity: 0.6 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: '100%', opacity: 0.6 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+          className="fixed inset-0 z-50 bg-gradient-to-b from-[#162252] via-[#0d142c] to-[#070b1a] flex flex-col md:hidden text-[#f7f5f0] select-none"
+        >
       {/* Top Bar / Minimize Header */}
       <div className="px-4 py-3 flex items-center justify-between">
         <button
@@ -110,14 +120,18 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
       {/* Main Body */}
       <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col justify-between">
         {/* Large Album Artwork */}
-        <div className="w-full aspect-square max-h-[340px] mx-auto rounded-2xl overflow-hidden shadow-2xl my-auto ring-1 ring-[#2b3b75]">
+        <motion.div
+          animate={{ scale: isPlaying ? 1 : 0.94 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+          className="w-full aspect-square max-h-[340px] mx-auto rounded-2xl overflow-hidden shadow-2xl my-auto ring-1 ring-[#2b3b75]"
+        >
           <img
             src={currentTrack.coverUrl}
             alt={currentTrack.title}
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover"
           />
-        </div>
+        </motion.div>
 
         {/* Track Title, Artist & Like Button */}
         <div className="mt-6 flex items-center justify-between">
@@ -157,6 +171,13 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
             </button>
           </div>
         </div>
+
+        {audioError && (
+          <div className="mt-3 px-3 py-2 rounded-xl bg-amber-950/70 border border-amber-500/40 text-[11px] text-amber-200 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="leading-snug">{audioError}</span>
+          </div>
+        )}
 
         {/* Precision Progress Scrubber */}
         <div className="mt-4">
@@ -298,6 +319,8 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

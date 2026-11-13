@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, ListMusic, Trash2, Play, Sparkles } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 
 export const QueueDrawer: React.FC = () => {
@@ -14,12 +15,19 @@ export const QueueDrawer: React.FC = () => {
     setIsQueueOpen
   } = usePlayer();
 
-  if (!isQueueOpen) return null;
-
   const upcomingTracks = queue.slice(queueIndex + 1);
 
   return (
-    <div className="fixed inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] w-full md:w-[420px] bg-[#0d142c] backdrop-blur-xl md:border-l md:border-[#222f5e] shadow-2xl z-50 flex flex-col text-[#f7f5f0]">
+    <AnimatePresence>
+      {isQueueOpen && (
+        <motion.div
+          key="queue-drawer"
+          initial={{ x: '100%', opacity: 0.4 }}
+          animate={{ x: 0, opacity: 1 }}
+          exit={{ x: '100%', opacity: 0.4 }}
+          transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+          className="fixed inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] w-full md:w-[420px] bg-[#0d142c] backdrop-blur-xl md:border-l md:border-[#222f5e] shadow-2xl z-50 flex flex-col text-[#f7f5f0]"
+        >
       {/* Header */}
       <div className="p-4 px-6 border-b border-[#1e2a54] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
@@ -149,6 +157,8 @@ export const QueueDrawer: React.FC = () => {
           )}
         </div>
       </div>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

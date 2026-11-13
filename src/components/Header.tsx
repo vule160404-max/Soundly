@@ -13,6 +13,7 @@ import {
   History,
   Disc3,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
@@ -293,8 +294,15 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Search Suggestions Dropdown */}
-          {isSearchOpen && (
-            <div className="absolute left-0 right-0 top-full mt-2 z-50 bg-[#101836]/98 backdrop-blur-xl rounded-2xl border border-[#2b3b75] shadow-2xl overflow-hidden max-h-[72vh] overflow-y-auto">
+          <AnimatePresence>
+            {isSearchOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.985 }}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                className="absolute left-0 right-0 top-full mt-2 z-50 bg-[#101836]/98 backdrop-blur-xl rounded-2xl border border-[#2b3b75] shadow-2xl overflow-hidden max-h-[72vh] overflow-y-auto"
+              >
               {/* Recent Searches when input is empty */}
               {!hasQuery && recentSearches.length > 0 && (
                 <div className="p-3 border-b border-[#1e2a54]">
@@ -504,8 +512,9 @@ export const Header: React.FC<HeaderProps> = ({
                   )}
                 </div>
               )}
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Right Actions: PWA Install, Sleep Timer & Login / Profile */}
@@ -581,11 +590,16 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               {/* Profile Dropdown */}
-              {isProfileMenuOpen && (
-                <div
-                  onClick={() => setIsProfileMenuOpen(false)}
-                  className="absolute right-0 top-full mt-2 z-40 w-64 bg-[#141d3d] rounded-2xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0] animate-in fade-in zoom-in-95"
-                >
+              <AnimatePresence>
+                {isProfileMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                    transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                    onClick={() => setIsProfileMenuOpen(false)}
+                    className="absolute right-0 top-full mt-2 z-40 w-64 bg-[#141d3d] rounded-2xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0]"
+                  >
                   <div className="p-3 border-b border-[#222f5e]">
                     <p className="font-bold text-[#f7f5f0] truncate text-sm">
                       {user.displayName || 'Tài khoản Google'}
@@ -621,8 +635,9 @@ export const Header: React.FC<HeaderProps> = ({
                     <LogOut className="w-4 h-4" />
                     <span>Đăng xuất</span>
                   </button>
-                </div>
-              )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
             <button
@@ -641,7 +656,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             key={g.id}
             onClick={() => setActiveGenre(g.id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all whitespace-nowrap shrink-0 min-h-[32px] flex items-center ${
+            className={`px-3 py-1.5 text-xs font-semibold rounded-full active:scale-95 transition-all duration-150 whitespace-nowrap shrink-0 min-h-[32px] flex items-center ${
               activeGenre === g.id
                 ? 'bg-[#f47b64] text-[#070b1a] font-bold shadow-sm'
                 : 'bg-[#141d3d] text-[#f7f5f0] hover:bg-[#1c2852]'

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Mic2, Maximize2, Minimize2, Sparkles, AlignLeft, Clock } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 import { LyricLine } from '../types/music';
 
@@ -95,16 +96,21 @@ export const LyricsDrawer: React.FC = () => {
     }
   }, [activeIndex, effectiveMode]);
 
-  if (!isLyricsOpen) return null;
-
   return (
-    <div
-      className={`fixed z-50 transition-all duration-300 ${
-        isFullscreen
-          ? 'inset-0 bg-[#0d142c]'
-          : 'inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] md:w-[460px] bg-[#0d142c]/98 md:border-l md:border-[#222f5e] shadow-2xl'
-      } backdrop-blur-xl flex flex-col text-[#f7f5f0]`}
-    >
+    <AnimatePresence>
+      {isLyricsOpen && (
+        <motion.div
+          key="lyrics-drawer"
+          initial={{ x: '100%', opacity: 0.4 }}
+          animate={{ x: 0, opacity: 1 }}
+          exit={{ x: '100%', opacity: 0.4 }}
+          transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+          className={`fixed z-50 ${
+            isFullscreen
+              ? 'inset-0 bg-[#0d142c]'
+              : 'inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] md:w-[460px] bg-[#0d142c]/98 md:border-l md:border-[#222f5e] shadow-2xl'
+          } backdrop-blur-xl flex flex-col text-[#f7f5f0]`}
+        >
       {/* Drawer Header with Saved Cover Art */}
       <div className="p-4 px-5 border-b border-[#1e2a54] flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -258,6 +264,8 @@ export const LyricsDrawer: React.FC = () => {
             ? 'Đang hiển thị lời bài hát dạng văn bản thuần'
             : 'Âm nhạc nguyên bản'}
       </div>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
