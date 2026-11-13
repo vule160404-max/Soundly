@@ -8,12 +8,14 @@ interface PlaylistDetailViewProps {
   playlist: Playlist;
   allTracks: Track[];
   onBackToHome: () => void;
+  onSelectArtist?: (artistName: string) => void;
 }
 
 export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   playlist,
   allTracks,
-  onBackToHome
+  onBackToHome,
+  onSelectArtist,
 }) => {
   const {
     playTrack,
@@ -148,6 +150,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             tracks={playlistTracks}
             customPlaylistId={playlist.isCustom ? playlist.id : undefined}
             onPlayList={(list, idx) => playTrack(list[idx], list)}
+            onSelectArtist={onSelectArtist}
           />
         ) : (
           <div className="py-16 text-center text-[#a3aed0] space-y-3">

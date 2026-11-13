@@ -1,25 +1,45 @@
-import React from 'react';
-import { Music, Sparkles } from 'lucide-react';
-import { Track, GenreCategory } from '../types/music';
+import React, { useMemo } from 'react';
+import { Music, Sparkles, Mic2, ArrowRight } from 'lucide-react';
+import { Track, GenreCategory, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
+import { ArtistAvatar } from './ArtistAvatar';
+import { normalizeSearchText } from '../utils/artistSync';
 
 interface ExploreViewProps {
   tracks: Track[];
   genres: GenreCategory[];
+  artists: ArtistProfile[];
+  searchQuery: string;
   activeGenre: string;
   setActiveGenre: (genre: string) => void;
+  onSelectArtist: (artist: ArtistProfile) => void;
+  onSelectArtistByName: (artistName: string) => void;
+  onOpenArtists: () => void;
 }
 
 export const ExploreView: React.FC<ExploreViewProps> = ({
   tracks,
   genres,
+  artists,
+  searchQuery,
   activeGenre,
   setActiveGenre,
+  onSelectArtist,
+  onSelectArtistByName,
+  onOpenArtists,
 }) => {
   const filteredTracks =
     activeGenre === 'all'
       ? tracks
       : tracks.filter(t => t.genre.toLowerCase() === activeGenre.toLowerCase());
+
+  const matchingArtists = useMemo(() => {
+    const q = normalizeSearchText(searchQuery);
+    if (!q) return [];
+    return artists
+      .filter(a => normalizeSearchText(a.name).includes(q))
+      .slice(0, 6);
+  }, [artists, searchQuery]);
 
   // Soundly Curated Genre Palette (Harmonized Navy, Coral, Plum, Slate, Indigo tones)
   const getCardBg = (index: number) => {
@@ -43,14 +63,67 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   return (
     <div className="space-y-8 pb-12 text-[#f7f5f0]">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl sm:text-3xl font-extrabold text-[#f7f5f0] tracking-tight">
-          Duyệt tìm tất cả
-        </h2>
-        <p className="text-xs sm:text-sm text-[#a3aed0] mt-1">
-          Khám phá 12 thể loại âm nhạc chọn lọc, nghe hoàn toàn miễn phí trên Soundly.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-[#f7f5f0] tracking-tight">
+            {searchQuery.trim()
+              ? `Kết quả tìm kiếm: “${searchQuery.trim()}”`
+              : 'Duyệt tìm tất cả'}
+          </h2>
+          <p className="text-xs sm:text-sm text-[#a3aed0] mt-1">
+            Khám phá 12 thể loại âm nhạc và danh sách nghệ sĩ trên Soundly.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onOpenArtists}
+          className="inline-flex items-center gap-2 min-h-[40px] px-4 py-2 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] text-xs font-bold text-[#f7f5f0] transition-colors self-start sm:self-auto whitespace-nowrap shrink-0"
+        >
+          <Mic2 className="w-4 h-4 text-[#f47b64]" />
+          <span>Xem tất cả Nghệ sĩ ({artists.length})</span>
+          <ArrowRight className="w-3.5 h-3.5 text-[#a3aed0]" />
+        </button>
       </div>
+
+      {/* Matching Artists when searching */}
+      {matchingArtists.length > 0 && (
+        <section>
+          <h3 className="text-lg font-bold text-[#f7f5f0] tracking-tight mb-3">
+            Nghệ sĩ phù hợp
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {matchingArtists.map(artist => (
+              <div
+                key={artist.id}
+                onClick={() => onSelectArtist(artist)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectArtist(artist);
+                  }
+                }}
+                className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] transition-all cursor-pointer flex flex-col items-center text-center"
+              >
+                <ArtistAvatar
+                  artist={artist}
+                  sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                  textSizeClass="text-xl"
+                  className="group-hover:scale-105 transition-transform"
+                />
+                <p className="mt-2.5 text-xs sm:text-sm font-bold text-[#f7f5f0] truncate w-full">
+                  {artist.name}
+                </p>
+                <p className="text-[11px] text-[#a3aed0] mt-0.5 tabular-nums">
+                  {artist.trackCount} bài hát
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Soundly Genre Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 sm:gap-4">
@@ -64,7 +137,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           }`}
         >
           <span className="text-base font-bold tracking-tight">Tất cả bài hát</span>
-          <div className="text-xs opacity-85">{tracks.length} bản nhạc</div>
+          <div className="text-xs opacity-85 tabular-nums">{tracks.length} bản nhạc</div>
           <Sparkles className="w-16 h-16 absolute -right-2 -bottom-2 opacity-20 transform rotate-12 group-hover:scale-110 transition-transform" />
         </button>
 
@@ -86,7 +159,9 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
               <span className="text-base font-bold tracking-tight leading-snug pr-4">
                 {genre.name}
               </span>
-              <div className="text-xs opacity-85 font-medium">{count} bài hát</div>
+              <div className="text-xs opacity-85 font-medium tabular-nums">
+                {count} bài hát
+              </div>
               <Music className="w-16 h-16 absolute -right-2 -bottom-2 opacity-25 transform rotate-12 group-hover:scale-110 transition-transform" />
             </button>
           );
@@ -105,7 +180,10 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         </div>
 
         <div className="bg-[#0d142c] rounded-xl p-2">
-          <TrackTable tracks={filteredTracks} />
+          <TrackTable
+            tracks={filteredTracks}
+            onSelectArtist={onSelectArtistByName}
+          />
         </div>
       </section>
     </div>

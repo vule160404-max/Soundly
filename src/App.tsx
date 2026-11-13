@@ -11,6 +11,8 @@ import { Header } from './components/Header';
 import { PlayerBar } from './components/PlayerBar';
 import { HomeView } from './components/HomeView';
 import { ExploreView } from './components/ExploreView';
+import { ArtistsView } from './components/ArtistsView';
+import { ArtistDetailView } from './components/ArtistDetailView';
 import { PlaylistDetailView } from './components/PlaylistDetailView';
 import { LikedSongsView } from './components/LikedSongsView';
 import { HistoryView } from './components/HistoryView';
@@ -27,8 +29,13 @@ import { AddToAlbumModal } from './components/AddToAlbumModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { musicApi } from './services/api';
-import { Track, Playlist, GenreCategory } from './types/music';
+import { Track, Playlist, GenreCategory, ArtistProfile } from './types/music';
 import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from './data/mockTracks';
+import {
+  buildArtistDirectory,
+  findArtistByNameOrId,
+  matchesTrackSearch,
+} from './utils/artistSync';
 import { Loader2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -37,19 +44,20 @@ const MainContent: React.FC = () => {
 
   const [currentView, setCurrentView] = useState<string>('home');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeGenre, setActiveGenre] = useState<string>('all');
   const [isSleepTimerOpen, setIsSleepTimerOpen] = useState<boolean>(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState<boolean>(false);
 
-  // App data state
-  const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
+  // Full synchronized catalog state
+  const [allTracks, setAllTracks] = useState<Track[]>(INITIAL_TRACKS);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [genres, setGenres] = useState<GenreCategory[]>(INITIAL_GENRES);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Fetch initial music catalog from Express Backend API
+  // Fetch complete music catalog on sign-in
   useEffect(() => {
     if (!user) return;
 
@@ -64,7 +72,7 @@ const MainContent: React.FC = () => {
         ]);
 
         if (isMounted) {
-          setTracks(fetchedTracks || []);
+          setAllTracks(fetchedTracks || []);
           setPlaylists(fetchedPlaylists || []);
           if (fetchedGenres && fetchedGenres.length > 0) setGenres(fetchedGenres);
         }
@@ -82,31 +90,28 @@ const MainContent: React.FC = () => {
     };
   }, [user]);
 
-  // Update track list when search or genre changes
-  useEffect(() => {
-    if (!user) return;
-    let isMounted = true;
+  // Real-time synchronized Artist Directory (splits multi-artist strings & updates live)
+  const artists = useMemo(() => buildArtistDirectory(allTracks), [allTracks]);
 
-    async function searchTracks() {
-      try {
-        const results = await musicApi.getTracks(searchQuery, activeGenre);
-        if (isMounted) {
-          setTracks(results);
-        }
-      } catch (err) {
-        console.warn('Search query error:', err);
-      }
+  // Instant accent-insensitive & genre filtered tracks for Home / Explore
+  const filteredTracks = useMemo(() => {
+    let results = allTracks;
+    if (activeGenre && activeGenre !== 'all') {
+      results = results.filter(
+        (t) => t.genre.toLowerCase() === activeGenre.toLowerCase()
+      );
     }
+    if (searchQuery.trim()) {
+      results = results.filter((t) => matchesTrackSearch(t, searchQuery));
+    }
+    return results;
+  }, [allTracks, activeGenre, searchQuery]);
 
-    const timer = setTimeout(() => {
-      searchTracks();
-    }, 200);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [searchQuery, activeGenre, user]);
+  // Live selected artist (stays in sync when catalog updates)
+  const selectedArtist = useMemo(() => {
+    if (!selectedArtistId) return null;
+    return findArtistByNameOrId(artists, selectedArtistId);
+  }, [selectedArtistId, artists]);
 
   // Merge custom user albums with catalog playlists so created albums open reliably
   const selectedPlaylist = useMemo(() => {
@@ -117,6 +122,21 @@ const MainContent: React.FC = () => {
       null
     );
   }, [selectedPlaylistId, userPlaylists, playlists]);
+
+  const handleSelectArtist = (artist: ArtistProfile) => {
+    setSelectedArtistId(artist.id);
+    setSelectedPlaylistId(null);
+    setCurrentView('artist-detail');
+  };
+
+  const handleSelectArtistByName = (artistName: string) => {
+    const found = findArtistByNameOrId(artists, artistName);
+    if (found) {
+      handleSelectArtist(found);
+    } else {
+      setCurrentView('artists');
+    }
+  };
 
   // 1. Loading Authentication State Splash Screen
   if (isAuthLoading) {
@@ -162,6 +182,10 @@ const MainContent: React.FC = () => {
           setSearchQuery={setSearchQuery}
           activeGenre={activeGenre}
           setActiveGenre={setActiveGenre}
+          allTracks={allTracks}
+          artists={artists}
+          onSelectArtist={handleSelectArtist}
+          onNavigateToExplore={() => setCurrentView('explore')}
           onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
           onOpenMobileMenu={() => setIsMobileDrawerOpen(true)}
           onOpenAdmin={() => setCurrentView('admin')}
@@ -176,44 +200,73 @@ const MainContent: React.FC = () => {
             </div>
           ) : currentView === 'home' ? (
             <HomeView
-              tracks={tracks}
+              tracks={filteredTracks}
               playlists={playlists}
+              artists={artists}
               onSelectPlaylist={(pl) => {
                 setSelectedPlaylistId(pl.id);
                 setCurrentView('playlist');
               }}
+              onSelectArtist={handleSelectArtist}
+              onSelectArtistByName={handleSelectArtistByName}
+              onOpenArtists={() => setCurrentView('artists')}
               onExploreGenres={() => setCurrentView('explore')}
             />
           ) : currentView === 'explore' ? (
             <ExploreView
-              tracks={tracks}
+              tracks={filteredTracks}
               genres={genres}
+              artists={artists}
+              searchQuery={searchQuery}
               activeGenre={activeGenre}
               setActiveGenre={setActiveGenre}
+              onSelectArtist={handleSelectArtist}
+              onSelectArtistByName={handleSelectArtistByName}
+              onOpenArtists={() => setCurrentView('artists')}
+            />
+          ) : currentView === 'artists' ? (
+            <ArtistsView
+              artists={artists}
+              onSelectArtist={handleSelectArtist}
+            />
+          ) : currentView === 'artist-detail' && selectedArtist ? (
+            <ArtistDetailView
+              artist={selectedArtist}
+              allArtists={artists}
+              onBackToArtists={() => setCurrentView('artists')}
+              onSelectArtist={handleSelectArtist}
             />
           ) : currentView === 'playlist' && selectedPlaylist ? (
             <PlaylistDetailView
               playlist={selectedPlaylist}
-              allTracks={tracks}
+              allTracks={allTracks}
               onBackToHome={() => {
                 setCurrentView('home');
                 setSelectedPlaylistId(null);
               }}
+              onSelectArtist={handleSelectArtistByName}
             />
           ) : currentView === 'liked' ? (
-            <LikedSongsView allTracks={tracks} />
+            <LikedSongsView
+              allTracks={allTracks}
+              onSelectArtist={handleSelectArtistByName}
+            />
           ) : currentView === 'history' ? (
-            <HistoryView />
+            <HistoryView onSelectArtist={handleSelectArtistByName} />
           ) : currentView === 'admin' ? (
-            <AdminDashboardView tracks={tracks} onTracksUpdated={setTracks} />
+            <AdminDashboardView tracks={allTracks} onTracksUpdated={setAllTracks} />
           ) : (
             <HomeView
-              tracks={tracks}
+              tracks={filteredTracks}
               playlists={playlists}
+              artists={artists}
               onSelectPlaylist={(pl) => {
                 setSelectedPlaylistId(pl.id);
                 setCurrentView('playlist');
               }}
+              onSelectArtist={handleSelectArtist}
+              onSelectArtistByName={handleSelectArtistByName}
+              onOpenArtists={() => setCurrentView('artists')}
               onExploreGenres={() => setCurrentView('explore')}
             />
           )}

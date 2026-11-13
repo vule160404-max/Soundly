@@ -12,12 +12,14 @@ import {
 } from 'lucide-react';
 import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
+import { splitArtistNames } from '../utils/artistSync';
 
 interface TrackTableProps {
   tracks: Track[];
   onPlayList?: (tracks: Track[], startIndex: number) => void;
   showCover?: boolean;
   customPlaylistId?: string;
+  onSelectArtist?: (artistName: string) => void;
 }
 
 export const TrackTable: React.FC<TrackTableProps> = ({
@@ -25,6 +27,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   onPlayList,
   showCover = true,
   customPlaylistId,
+  onSelectArtist,
 }) => {
   const {
     currentTrack,
@@ -139,7 +142,27 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     {track.title}
                   </p>
                   <div className="flex items-center gap-1.5 text-xs text-[#a3aed0] truncate mt-0.5">
-                    <span className="truncate">{track.artist}</span>
+                    {onSelectArtist ? (
+                      <span className="truncate">
+                        {splitArtistNames(track.artist, track.title).map((artistName, aIdx) => (
+                          <React.Fragment key={`${track.id}-m-art-${aIdx}`}>
+                            {aIdx > 0 && <span>, </span>}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectArtist(artistName);
+                              }}
+                              className="hover:text-[#f47b64] hover:underline transition-colors inline text-left"
+                            >
+                              {artistName}
+                            </button>
+                          </React.Fragment>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="truncate">{track.artist}</span>
+                    )}
                     <span>•</span>
                     <span className="font-mono tabular-nums shrink-0">{formatDuration(track.duration)}</span>
                   </div>
@@ -311,7 +334,23 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                       {track.title}
                     </p>
                     <p className="truncate text-[#a3aed0] text-[11px] group-hover:text-[#f7f5f0] transition-colors">
-                      {track.artist}
+                      {onSelectArtist
+                        ? splitArtistNames(track.artist, track.title).map((artistName, aIdx) => (
+                            <React.Fragment key={`${track.id}-d-art-${aIdx}`}>
+                              {aIdx > 0 && <span>, </span>}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectArtist(artistName);
+                                }}
+                                className="hover:text-[#f47b64] hover:underline transition-colors inline text-left"
+                              >
+                                {artistName}
+                              </button>
+                            </React.Fragment>
+                          ))
+                        : track.artist}
                     </p>
                   </div>
                 </div>

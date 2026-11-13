@@ -3,7 +3,11 @@ import { History } from 'lucide-react';
 import { TrackTable } from './TrackTable';
 import { usePlayer } from '../context/PlayerContext';
 
-export const HistoryView: React.FC = () => {
+interface HistoryViewProps {
+  onSelectArtist?: (artistName: string) => void;
+}
+
+export const HistoryView: React.FC<HistoryViewProps> = ({ onSelectArtist }) => {
   const { recentHistory, playTrack } = usePlayer();
 
   return (
@@ -31,7 +35,11 @@ export const HistoryView: React.FC = () => {
       {/* Tracks Table */}
       <div className="bg-[#0d142c] rounded-xl p-2">
         {recentHistory.length > 0 ? (
-          <TrackTable tracks={recentHistory} onPlayList={(list, idx) => playTrack(list[idx], list)} />
+          <TrackTable
+            tracks={recentHistory}
+            onPlayList={(list, idx) => playTrack(list[idx], list)}
+            onSelectArtist={onSelectArtist}
+          />
         ) : (
           <div className="py-16 text-center text-[#a3aed0]">
             <History className="w-10 h-10 mx-auto mb-3 text-[#f47b64]/45" />

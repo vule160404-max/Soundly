@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Compass, Library, Heart, ShieldCheck } from 'lucide-react';
+import { Home, Compass, Library, Heart, ShieldCheck, Mic2 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -26,7 +26,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   const baseTabs: NavTab[] = [
     { id: 'home', label: 'Trang chủ', icon: Home },
-    { id: 'explore', label: 'Tìm kiếm', icon: Compass },
+    { id: 'artists', label: 'Nghệ sĩ', icon: Mic2 },
+    { id: 'explore', label: 'Khám phá', icon: Compass },
     { id: 'library', label: 'Thư viện', icon: Library },
   ];
 
@@ -49,10 +50,12 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   };
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#070b1a]/95 backdrop-blur-md border-t border-[#1e2a54] h-16 flex items-center justify-around px-2 md:hidden select-none shadow-2xl">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#070b1a]/95 backdrop-blur-md border-t border-[#1e2a54] h-16 flex items-center justify-around px-1 md:hidden select-none shadow-2xl">
       {tabs.map(tab => {
         const Icon = tab.icon;
-        const isActive = currentView === tab.id;
+        const isActive =
+          currentView === tab.id ||
+          (tab.id === 'artists' && currentView === 'artist-detail');
 
         return (
           <button

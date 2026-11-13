@@ -1,20 +1,29 @@
 import React from 'react';
-import { Play, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3 } from 'lucide-react';
-import { Track, Playlist } from '../types/music';
+import { Play, Pause, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3, Mic2, ArrowRight } from 'lucide-react';
+import { Track, Playlist, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
+import { ArtistAvatar } from './ArtistAvatar';
 import { usePlayer } from '../context/PlayerContext';
 
 interface HomeViewProps {
   tracks: Track[];
   playlists: Playlist[];
+  artists: ArtistProfile[];
   onSelectPlaylist: (playlist: Playlist) => void;
+  onSelectArtist: (artist: ArtistProfile) => void;
+  onSelectArtistByName: (artistName: string) => void;
+  onOpenArtists: () => void;
   onExploreGenres: () => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
   tracks,
   playlists,
+  artists,
   onSelectPlaylist,
+  onSelectArtist,
+  onSelectArtistByName,
+  onOpenArtists,
   onExploreGenres,
 }) => {
   const {
@@ -169,6 +178,99 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
           </section>
 
+          {/* Featured Artists (Spotify-style circular cards) */}
+          {artists.length > 0 && (
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
+                  <Mic2 className="w-5 h-5 text-[#f47b64]" />
+                  <span>Nghệ sĩ trên Soundly</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={onOpenArtists}
+                  className="text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] flex items-center gap-1 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <span>Hiện tất cả ({artists.length})</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {artists.slice(0, 6).map((artist) => {
+                  const isArtistActive =
+                    currentTrack &&
+                    artist.tracks.some((t) => t.id === currentTrack.id);
+                  const isArtistPlaying = Boolean(isArtistActive && isPlaying);
+
+                  return (
+                    <div
+                      key={artist.id}
+                      onClick={() => onSelectArtist(artist)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSelectArtist(artist);
+                        }
+                      }}
+                      className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] transition-all cursor-pointer flex flex-col items-center text-center"
+                    >
+                      <div className="relative w-24 h-24 sm:w-28 sm:h-28">
+                        <ArtistAvatar
+                          artist={artist}
+                          sizeClass="w-full h-full"
+                          textSizeClass="text-2xl"
+                          className="group-hover:scale-[1.03] transition-transform"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (artist.tracks.length === 0) return;
+                            if (isArtistPlaying) {
+                              togglePlay();
+                            } else {
+                              playTrack(artist.tracks[0], artist.tracks);
+                            }
+                          }}
+                          aria-label={
+                            isArtistPlaying
+                              ? `Tạm dừng nhạc của ${artist.name}`
+                              : `Phát nhạc của ${artist.name}`
+                          }
+                          className={`absolute right-0 bottom-0 w-9 h-9 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all ${
+                            isArtistPlaying
+                              ? 'opacity-100 translate-y-0'
+                              : 'opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0'
+                          }`}
+                        >
+                          {isArtistPlaying ? (
+                            <Pause className="w-4 h-4 fill-[#070b1a]" />
+                          ) : (
+                            <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
+                          )}
+                        </button>
+                      </div>
+
+                      <h4
+                        className={`text-xs sm:text-sm font-bold truncate w-full mt-3 ${
+                          isArtistActive ? 'text-[#f47b64]' : 'text-[#f7f5f0]'
+                        }`}
+                      >
+                        {artist.name}
+                      </h4>
+                      <p className="text-[11px] text-[#a3aed0] mt-0.5 truncate w-full tabular-nums">
+                        Nghệ sĩ · {artist.trackCount} bài hát
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {/* Personal Albums Section */}
           <section>
             <div className="flex items-center justify-between mb-3">
@@ -247,7 +349,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
 
             <div className="bg-[#0d142c] rounded-xl p-2">
-              <TrackTable tracks={tracks} />
+              <TrackTable tracks={tracks} onSelectArtist={onSelectArtistByName} />
             </div>
           </section>
         </>

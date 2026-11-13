@@ -45,3 +45,19 @@ export interface GenreCategory {
   iconName: string;
   trackCount: number;
 }
+
+export interface ArtistProfile {
+  id: string;
+  name: string;
+  normalizedKey: string;
+  avatarUrl: string;
+  isDefaultAvatar: boolean;
+  tracks: Track[];
+  trackCount: number;
+  totalPlays: number;
+  totalDuration: number;
+  genres: string[];
+  albums: string[];
+  collaborators: string[];
+  accentGradient: string;
+}

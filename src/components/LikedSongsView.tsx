@@ -6,9 +6,13 @@ import { usePlayer } from '../context/PlayerContext';
 
 interface LikedSongsViewProps {
   allTracks: Track[];
+  onSelectArtist?: (artistName: string) => void;
 }
 
-export const LikedSongsView: React.FC<LikedSongsViewProps> = ({ allTracks }) => {
+export const LikedSongsView: React.FC<LikedSongsViewProps> = ({
+  allTracks,
+  onSelectArtist,
+}) => {
   const { likedTrackIds, playTrack, currentTrack, isPlaying, togglePlay } = usePlayer();
 
   const likedTracks = allTracks.filter(t => likedTrackIds.includes(t.id));
@@ -67,7 +71,11 @@ export const LikedSongsView: React.FC<LikedSongsViewProps> = ({ allTracks }) => 
       {/* Table */}
       <div className="bg-[#0d142c] rounded-xl p-2">
         {likedTracks.length > 0 ? (
-          <TrackTable tracks={likedTracks} onPlayList={(list, idx) => playTrack(list[idx], list)} />
+          <TrackTable
+            tracks={likedTracks}
+            onPlayList={(list, idx) => playTrack(list[idx], list)}
+            onSelectArtist={onSelectArtist}
+          />
         ) : (
           <div className="py-16 text-center text-[#a3aed0]">
             <Heart className="w-12 h-12 mx-auto mb-3 text-[#f47b64]/45" />
