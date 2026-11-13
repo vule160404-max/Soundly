@@ -73,17 +73,7 @@ if (typeof window !== 'undefined') {
   prewarmGooglePopupAuth();
 }
 
-// Validate Connection to Firestore on boot
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
-  }
-}
-testConnection();
+
 
 export enum OperationType {
   CREATE = 'create',

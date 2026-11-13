@@ -389,11 +389,12 @@ const MainContent: React.FC = () => {
       <AddToAlbumModal />
       <ConfirmDialog />
 
-      {/* FULLSCREEN NOW PLAYING MODAL ON MOBILE */}
+      {/* FULLSCREEN NOW PLAYING MODAL */}
       <MobileNowPlayingModal
         isOpen={isMobileNowPlayingOpen}
         onClose={() => setIsMobileNowPlayingOpen(false)}
         onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
+        onSelectArtistByName={handleSelectArtistByName}
       />
 
       {/* BOTTOM PLAYBACK BAR (Mobile Mini Player + Desktop Full Bar) */}

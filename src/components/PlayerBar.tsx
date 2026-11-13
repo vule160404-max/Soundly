@@ -175,12 +175,16 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
         <div className="flex items-center gap-3.5 w-1/4 min-w-[200px] max-w-[320px]">
           {currentTrack ? (
             <>
-              <div className="relative group shrink-0">
+              <div
+                onClick={onOpenMobileNowPlaying}
+                title="Mở giao diện Đang phát & Lời bài hát"
+                className="relative group shrink-0 cursor-pointer"
+              >
                 <img
                   src={currentTrack.coverUrl}
                   alt={currentTrack.title}
                   referrerPolicy="no-referrer"
-                  className="w-14 h-14 rounded-md object-cover shadow-sm"
+                  className="w-14 h-14 rounded-md object-cover shadow-sm group-hover:brightness-90 transition-all"
                 />
                 {isPlaying && (
                   <div className="absolute inset-0 bg-[#070b1a]/45 rounded-md flex items-center justify-center">
@@ -194,10 +198,17 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
               </div>
 
               <div className="min-w-0 pr-1">
-                <p className="text-sm font-bold text-[#f7f5f0] truncate hover:underline cursor-pointer">
+                <p
+                  onClick={onOpenMobileNowPlaying}
+                  title="Mở giao diện Đang phát & Lời bài hát"
+                  className="text-sm font-bold text-[#f7f5f0] truncate hover:underline cursor-pointer"
+                >
                   {currentTrack.title}
                 </p>
-                <p className="text-xs text-[#a3aed0] truncate hover:text-[#f7f5f0] hover:underline cursor-pointer">
+                <p
+                  onClick={onOpenMobileNowPlaying}
+                  className="text-xs text-[#a3aed0] truncate hover:text-[#f7f5f0] hover:underline cursor-pointer"
+                >
                   {currentTrack.artist}
                 </p>
                 {audioError && (

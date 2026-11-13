@@ -1,54 +1,48 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ChevronDown,
-  Heart,
   Play,
   Pause,
   SkipBack,
   SkipForward,
   Shuffle,
-  Repeat,
-  Repeat1,
-  Mic2,
   ListMusic,
-  Moon,
-  Activity,
-  Volume2,
-  VolumeX,
   Share2,
-  FolderPlus,
   Check,
+  Plus,
+  X,
+  MoreHorizontal,
+  Timer,
+  Speaker,
   AlertCircle
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
+import { findActiveLyricIndex, getTrackSyncedLines } from '../utils/lyricsSync';
 
 interface MobileNowPlayingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenSleepTimer: () => void;
+  onSelectArtistByName?: (artistName: string) => void;
 }
 
 export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
   isOpen,
   onClose,
-  onOpenSleepTimer
+  onOpenSleepTimer,
+  onSelectArtistByName
 }) => {
   const {
     currentTrack,
     isPlaying,
     currentTime,
     duration,
-    volume,
-    isMuted,
     isShuffle,
-    repeatMode,
+    sleepTimerRemaining,
     togglePlay,
     seek,
-    setVolume,
-    toggleMute,
     toggleShuffle,
-    cycleRepeatMode,
     playNext,
     playPrevious,
     toggleLike,
@@ -57,18 +51,48 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
     setIsQueueOpen,
     setIsVisualizerOpen,
     openAlbumPicker,
-    userPlaylists,
     audioError
   } = usePlayer();
 
   const formatTime = (secs: number) => {
-    if (!secs || isNaN(secs)) return '0:00';
+    if (!secs || isNaN(secs) || secs < 0) return '0:00';
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   const liked = currentTrack ? isLiked(currentTrack.id) : false;
+
+  const syncedLines = useMemo(
+    () => getTrackSyncedLines(currentTrack, duration),
+    [currentTrack, duration]
+  );
+
+  const activeLyricIdx = useMemo(
+    () => findActiveLyricIndex(syncedLines, currentTime),
+    [syncedLines, currentTime]
+  );
+
+  // Build 5-line window matching Spotify's "Bản xem trước lời bài hát" card:
+  // Keeps active line at row 3-4 so sung & active lines are bright white and the 5th upcoming line is dark muted
+  const previewWindow = useMemo(() => {
+    if (syncedLines.length === 0) return [];
+    const windowSize = 5;
+    if (syncedLines.length <= windowSize) {
+      return syncedLines.map((line, idx) => ({ line, idx }));
+    }
+    const effectiveActive = activeLyricIdx === -1 ? 0 : activeLyricIdx;
+    const maxStart = Math.max(0, syncedLines.length - windowSize);
+    const startIdx = Math.min(maxStart, Math.max(0, effectiveActive - 3));
+    return syncedLines
+      .slice(startIdx, startIdx + windowSize)
+      .map((line, offset) => ({ line, idx: startIdx + offset }));
+  }, [syncedLines, activeLyricIdx]);
+
+  const effectiveDuration = duration || currentTrack?.duration || 0;
+  const remainingTime = Math.max(0, effectiveDuration - currentTime);
+  const progressPercent =
+    effectiveDuration > 0 ? Math.min(100, (currentTime / effectiveDuration) * 100) : 0;
 
   return (
     <AnimatePresence>
@@ -78,324 +102,373 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
           initial={{ y: '100%', opacity: 0.6 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: '100%', opacity: 0.6 }}
-          transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-          className="fixed inset-0 z-50 bg-gradient-to-b from-[#162252] via-[#0d142c] to-[#070b1a] flex flex-col md:hidden text-[#f7f5f0] select-none soundly-overlay-top-safe soundly-bottom-safe"
+          transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex justify-center select-none"
         >
-      {/* Top Drag Indicator Pill */}
-      <div className="w-10 h-1 rounded-full bg-white/20 mx-auto mb-1 shrink-0" />
-
-      {/* Top Bar / Minimize Header */}
-      <div className="px-4 py-2.5 flex items-center justify-between gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={onClose}
-          className="min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.08] active:bg-white/[0.16] border border-white/10 flex items-center justify-center text-[#f7f5f0] active:scale-95 transition-all shrink-0 touch-manipulation"
-          title="Thu nhỏ"
-          aria-label="Thu nhỏ trình phát nhạc"
-        >
-          <ChevronDown className="w-6 h-6" />
-        </button>
-
-        <div className="text-center truncate px-2 min-w-0 flex-1">
-          <p className="text-[10px] uppercase font-bold tracking-wider text-[#a3aed0]">
-            Đang phát trên Soundly
-          </p>
-          <p className="text-xs font-bold text-[#f7f5f0] truncate">
-            {currentTrack.album || currentTrack.genre}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            if (navigator.share) {
-              navigator.share({
-                title: currentTrack.title,
-                text: `Nghe bài hát "${currentTrack.title}" của ${currentTrack.artist} trên Soundly!`,
-                url: window.location.href,
-              }).catch(() => {});
-            }
-          }}
-          className="min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.08] active:bg-white/[0.16] border border-white/10 flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0] active:scale-95 transition-all shrink-0 touch-manipulation"
-          title="Chia sẻ"
-          aria-label="Chia sẻ bài hát"
-        >
-          <Share2 className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Main Body */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col justify-between">
-        {/* Large Album Artwork */}
-        <motion.div
-          animate={{ scale: isPlaying ? 1 : 0.94 }}
-          transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-          className="w-full aspect-square max-h-[340px] mx-auto rounded-2xl overflow-hidden shadow-2xl my-auto ring-1 ring-[#2b3b75]"
-        >
-          <img
-            src={currentTrack.coverUrl}
-            alt={currentTrack.title}
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover"
-          />
-        </motion.div>
-
-        {/* Track Title, Artist & Like Button */}
-        <div className="mt-6 flex items-center justify-between">
-          <div className="min-w-0 pr-3">
-            <h2 className="text-2xl font-black text-[#f7f5f0] truncate">
-              {currentTrack.title}
-            </h2>
-            <p className="text-sm font-semibold text-[#a3aed0] truncate mt-0.5">
-              {currentTrack.artist}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => openAlbumPicker(currentTrack)}
-              className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full active:scale-110 transition-transform ${
-                userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id))
-                  ? 'text-[#f47b64]'
-                  : 'text-[#a3aed0]'
-              }`}
-              title="Thêm vào album trong thư viện"
-            >
-              {userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id)) ? (
-                <Check className="w-6 h-6 stroke-[2.5]" />
-              ) : (
-                <FolderPlus className="w-6 h-6" />
-              )}
-            </button>
-
-            <button
-              onClick={() => toggleLike(currentTrack.id)}
-              className="min-h-[48px] min-w-[48px] flex items-center justify-center active:scale-125 transition-transform shrink-0"
-              title={liked ? 'Xóa khỏi yêu thích' : 'Lưu vào yêu thích'}
-            >
-              <Heart className={`w-7 h-7 ${liked ? 'fill-[#f47b64] text-[#f47b64]' : 'text-[#a3aed0]'}`} />
-            </button>
-          </div>
-        </div>
-
-        {audioError && (
-          <div className="mt-3 px-3 py-2 rounded-xl bg-amber-950/70 border border-amber-500/40 text-[11px] text-amber-200 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="leading-snug">{audioError}</span>
-          </div>
-        )}
-
-        {/* Precision Progress Scrubber */}
-        <div className="mt-4">
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={0.5}
-            value={currentTime}
-            onChange={(e) => seek(parseFloat(e.target.value))}
-            className="w-full h-1.5 bg-[#222f5e] rounded-lg appearance-none cursor-pointer accent-[#f47b64]"
-          />
-          <div className="flex items-center justify-between text-xs font-mono tabular-nums text-[#a3aed0] mt-1.5">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-        </div>
-
-        {/* Spotify-Style Live Synced Lyrics Card (Directly below track & scrubber) */}
-        {(() => {
-          const syncedLines = React.useMemo(() => {
-            if (!currentTrack) return [];
-            const raw = currentTrack.syncedLyrics || '';
-            if (!raw.trim()) {
-              return Array.isArray(currentTrack.lyrics) ? currentTrack.lyrics : [];
-            }
-            const parsed: { time: number; text: string }[] = [];
-            const lines = raw.split(/\r?\n/);
-            const tagRegex = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
-            for (const rawLine of lines) {
-              const timestamps: number[] = [];
-              let match: RegExpExecArray | null;
-              tagRegex.lastIndex = 0;
-              while ((match = tagRegex.exec(rawLine)) !== null) {
-                const mins = parseInt(match[1], 10);
-                const secs = parseInt(match[2], 10);
-                const frac = parseInt((match[3] || '0').padEnd(3, '0').slice(0, 3), 10);
-                timestamps.push(mins * 60 + secs + frac / 1000);
-              }
-              if (timestamps.length > 0) {
-                const text = rawLine.replace(tagRegex, '').trim();
-                if (text) {
-                  for (const time of timestamps) parsed.push({ time, text });
-                }
-              }
-            }
-            parsed.sort((a, b) => a.time - b.time);
-            return parsed.length > 0 ? parsed : (Array.isArray(currentTrack.lyrics) ? currentTrack.lyrics : []);
-          }, [currentTrack]);
-
-          let activeLyricIdx = -1;
-          for (let i = syncedLines.length - 1; i >= 0; i--) {
-            if (currentTime >= syncedLines[i].time) {
-              activeLyricIdx = i;
-              break;
-            }
-          }
-
-          if (syncedLines.length === 0) return null;
-
-          return (
-            <div
-              onClick={() => setIsLyricsOpen(true)}
-              className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-[#1e2e63]/95 via-[#141f48]/95 to-[#0d142c]/95 border border-[#2b3b75] shadow-2xl cursor-pointer group active:scale-[0.98] transition-all relative overflow-hidden shrink-0"
-            >
-              <div className="absolute top-2.5 right-3 flex items-center gap-1.5 text-[10px] font-bold text-[#f47b64] bg-[#f47b64]/15 px-2 py-0.5 rounded-full">
-                <Mic2 className="w-3 h-3" />
-                <span>Lời trực tiếp (Spotify-style)</span>
+          {/* Scrollable Spotify-style Mobile / Full Now Playing Viewport */}
+          <div className="w-full max-w-[480px] h-full bg-[#0a0a0a] text-white overflow-y-auto overflow-x-hidden relative shadow-2xl soundly-overlay-top-safe soundly-bottom-safe">
+            {/* ===================================================== */}
+            {/* HERO ARTWORK + PLAYER CONTROLS SECTION                */}
+            {/* ===================================================== */}
+            <div className="relative flex flex-col justify-between min-h-[86dvh] pb-2">
+              {/* Full-bleed Hero Artwork Backdrop with Smooth Scrim */}
+              <div className="absolute inset-x-0 top-0 h-[66%] pointer-events-none overflow-hidden">
+                <motion.img
+                  key={currentTrack.id}
+                  initial={{ scale: 1.04, opacity: 0.7 }}
+                  animate={{ scale: isPlaying ? 1.02 : 1, opacity: 1 }}
+                  transition={{ duration: 0.5 }}
+                  src={currentTrack.coverUrl}
+                  alt={currentTrack.title}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover object-center"
+                />
+                {/* Top & bottom gradient scrims so header and controls pop cleanly */}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/15 to-[#0a0a0a]" />
+                <div className="absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent" />
               </div>
-              <div className="space-y-1.5 text-center py-1">
-                {activeLyricIdx !== -1 && activeLyricIdx > 0 && (
-                  <p className="text-xs text-[#a3aed0] truncate transition-all opacity-80">
-                    {syncedLines[activeLyricIdx - 1].text}
+
+              {/* Top Header Bar */}
+              <div className="relative z-10 px-4 pt-3 pb-2 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
+                  title="Thu nhỏ"
+                  aria-label="Thu nhỏ trình phát nhạc"
+                >
+                  <ChevronDown className="w-7 h-7 stroke-[2.2]" />
+                </button>
+
+                <div className="text-center truncate px-2 min-w-0 flex-1">
+                  <p className="text-xs sm:text-sm font-bold text-white truncate drop-shadow">
+                    {currentTrack.album || `${currentTrack.title} Radio`}
                   </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => openAlbumPicker(currentTrack)}
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
+                  title="Tùy chọn bài hát"
+                  aria-label="Tùy chọn bài hát"
+                >
+                  <MoreHorizontal className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Spacer pushing track info & controls to lower half */}
+              <div className="flex-1 min-h-[240px]" />
+
+              {/* Track Info + Controls Block */}
+              <div className="relative z-10 px-5 pt-4">
+                {/* Small Square Cover + Track Title/Artist + Dismiss & Green Check Like Button */}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <img
+                      src={currentTrack.coverUrl}
+                      alt={currentTrack.title}
+                      referrerPolicy="no-referrer"
+                      className="w-12 h-12 rounded-lg object-cover shadow-lg border border-white/15 shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-2xl font-extrabold text-white truncate leading-tight tracking-tight">
+                        {currentTrack.title}
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onSelectArtistByName) {
+                            onClose();
+                            onSelectArtistByName(currentTrack.artist);
+                          }
+                        }}
+                        className="text-sm font-medium text-white/70 hover:text-white truncate mt-0.5 block text-left max-w-full"
+                      >
+                        {currentTrack.artist}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={playNext}
+                      className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-white active:scale-90 transition-transform"
+                      title="Bỏ qua bài hát này"
+                      aria-label="Bỏ qua bài hát này"
+                    >
+                      <X className="w-6 h-6 stroke-[2]" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleLike(currentTrack.id)}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-125 transition-all shrink-0 ${
+                        liked
+                          ? 'bg-[#1ed760] text-black shadow-md shadow-[#1ed760]/25'
+                          : 'border-2 border-white/75 text-white hover:border-white'
+                      }`}
+                      title={liked ? 'Đã lưu vào Yêu thích' : 'Lưu vào Yêu thích'}
+                      aria-label={liked ? 'Đã lưu vào Yêu thích' : 'Lưu vào Yêu thích'}
+                    >
+                      {liked ? (
+                        <Check className="w-4 h-4 stroke-[3.2]" />
+                      ) : (
+                        <Plus className="w-4 h-4 stroke-[2.8]" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {audioError && (
+                  <div className="mt-3 px-3 py-2 rounded-xl bg-amber-950/70 border border-amber-500/40 text-[11px] text-amber-200 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="leading-snug">{audioError}</span>
+                  </div>
                 )}
-                <p className="text-sm sm:text-base font-extrabold text-[#f7f5f0] drop-shadow-md truncate py-0.5 transition-all text-[#f47b64]">
-                  {activeLyricIdx !== -1 ? syncedLines[activeLyricIdx].text : (syncedLines[0]?.text || 'Đang chuẩn bị lời bài hát...')}
-                </p>
-                {activeLyricIdx !== -1 && activeLyricIdx + 1 < syncedLines.length && (
-                  <p className="text-xs text-[#a3aed0] truncate transition-all opacity-80">
-                    {syncedLines[activeLyricIdx + 1].text}
-                  </p>
-                )}
+
+                {/* Progress Bar with Current Time & Negative Remaining Time (-2:59) */}
+                <div className="mt-5">
+                  <div className="relative flex items-center group">
+                    <div className="w-full h-1 bg-white/25 rounded-full overflow-hidden pointer-events-none">
+                      <div
+                        className="h-full bg-white rounded-full"
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={effectiveDuration || 100}
+                      step={0.2}
+                      value={currentTime}
+                      onChange={(e) => seek(parseFloat(e.target.value))}
+                      className="absolute inset-0 w-full h-4 opacity-0 cursor-pointer"
+                      aria-label="Tua bài hát"
+                    />
+                    <div
+                      className="w-3 h-3 rounded-full bg-white shadow pointer-events-none absolute -translate-x-1/2"
+                      style={{ left: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] font-medium tabular-nums text-white/65 mt-1.5">
+                    <span>{formatTime(currentTime)}</span>
+                    <span>-{formatTime(remainingTime)}</span>
+                  </div>
+                </div>
+
+                {/* Primary Playback Controls Row */}
+                <div className="mt-2 flex items-center justify-between">
+                  {/* Shuffle Toggle (Spotify Green with dot when active) */}
+                  <button
+                    type="button"
+                    onClick={toggleShuffle}
+                    className={`min-h-[44px] min-w-[44px] flex items-center justify-center relative transition-colors ${
+                      isShuffle ? 'text-[#1ed760]' : 'text-white/80 hover:text-white'
+                    }`}
+                    title={isShuffle ? 'Đang phát trộn bài thông minh' : 'Bật phát ngẫu nhiên'}
+                  >
+                    <Shuffle className="w-6 h-6" />
+                    {isShuffle && (
+                      <span className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-[#1ed760]" />
+                    )}
+                  </button>
+
+                  {/* Previous Track */}
+                  <button
+                    type="button"
+                    onClick={playPrevious}
+                    className="min-h-[48px] min-w-[48px] flex items-center justify-center text-white active:scale-90 transition-transform"
+                    title="Bài trước"
+                  >
+                    <SkipBack className="w-8 h-8 fill-white" />
+                  </button>
+
+                  {/* Large White Circular Play / Pause */}
+                  <button
+                    type="button"
+                    onClick={togglePlay}
+                    className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl active:scale-95 transition-transform"
+                    title={isPlaying ? 'Tạm dừng' : 'Phát'}
+                  >
+                    {isPlaying ? (
+                      <Pause className="w-8 h-8 fill-black text-black" />
+                    ) : (
+                      <Play className="w-8 h-8 fill-black text-black ml-1" />
+                    )}
+                  </button>
+
+                  {/* Next Track */}
+                  <button
+                    type="button"
+                    onClick={playNext}
+                    className="min-h-[48px] min-w-[48px] flex items-center justify-center text-white active:scale-90 transition-transform"
+                    title="Bài tiếp theo"
+                  >
+                    <SkipForward className="w-8 h-8 fill-white" />
+                  </button>
+
+                  {/* Sleep Timer Button */}
+                  <button
+                    type="button"
+                    onClick={onOpenSleepTimer}
+                    className={`min-h-[44px] min-w-[44px] flex items-center justify-center relative transition-colors ${
+                      sleepTimerRemaining ? 'text-[#1ed760]' : 'text-white/80 hover:text-white'
+                    }`}
+                    title="Hẹn giờ tắt nhạc"
+                  >
+                    <Timer className="w-6 h-6" />
+                    {sleepTimerRemaining && (
+                      <span className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-[#1ed760]" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Secondary Utility Icons Row (Speaker/Visualizer left, Share & Queue right) */}
+                <div className="mt-2 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      setIsVisualizerOpen(true);
+                    }}
+                    className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-transform"
+                    title="Thiết bị & Sóng nhạc"
+                  >
+                    <Speaker className="w-5 h-5" />
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (navigator.share) {
+                          navigator
+                            .share({
+                              title: currentTrack.title,
+                              text: `Nghe "${currentTrack.title}" - ${currentTrack.artist} trên Soundly`,
+                              url: window.location.href,
+                            })
+                            .catch(() => {});
+                        }
+                      }}
+                      className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-transform"
+                      title="Chia sẻ bài hát"
+                    >
+                      <Share2 className="w-5 h-5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        setIsQueueOpen(true);
+                      }}
+                      className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-transform"
+                      title="Danh sách chờ"
+                    >
+                      <ListMusic className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          );
-        })()}
 
-        {/* Primary Playback Controls */}
-        <div className="mt-3 flex items-center justify-between py-2">
-          {/* Shuffle Toggle */}
-          <button
-            onClick={toggleShuffle}
-            className={`min-h-[44px] min-w-[44px] flex items-center justify-center relative transition-colors ${
-              isShuffle ? 'text-[#f47b64]' : 'text-[#a3aed0]'
-            }`}
-          >
-            <Shuffle className="w-5 h-5" />
-            {isShuffle && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-[#f47b64]" />}
-          </button>
+            {/* ===================================================== */}
+            {/* SCROLLABLE CARDS BELOW PLAYER CONTROLS                */}
+            {/* ===================================================== */}
+            <div className="px-4 pb-12 space-y-4">
+              {/* 1. "Bản xem trước lời bài hát" Card (Matches Screenshot 1 & 3) */}
+              <div className="rounded-2xl bg-[#b85a52] p-5 shadow-2xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-3.5">
+                  <h3 className="text-sm font-bold text-white/95 tracking-tight">
+                    Bản xem trước lời bài hát
+                  </h3>
+                </div>
 
-          {/* Previous Track */}
-          <button
-            onClick={playPrevious}
-            className="min-h-[48px] min-w-[48px] flex items-center justify-center text-[#f7f5f0] active:scale-90 transition-transform"
-          >
-            <SkipBack className="w-7 h-7 fill-[#f7f5f0]" />
-          </button>
+                {previewWindow.length > 0 ? (
+                  <div className="space-y-2.5 text-left relative">
+                    {previewWindow.map(({ line, idx }, posInWindow) => {
+                      const isSungOrActive =
+                        activeLyricIdx === -1 ? posInWindow === 0 : idx <= activeLyricIdx;
+                      const isLastInWindow =
+                        posInWindow === previewWindow.length - 1 && previewWindow.length >= 5;
 
-          {/* Soundly Big Ivory Circle Play / Pause */}
-          <button
-            onClick={togglePlay}
-            className="w-16 h-16 rounded-full bg-[#f7f5f0] text-[#070b1a] flex items-center justify-center shadow-xl active:scale-95 transition-all"
-          >
-            {isPlaying ? (
-              <Pause className="w-7 h-7 fill-[#070b1a]" />
-            ) : (
-              <Play className="w-7 h-7 fill-[#070b1a] ml-1" />
-            )}
-          </button>
+                      return (
+                        <p
+                          key={`${line.time}-${idx}`}
+                          onClick={() => seek(line.time)}
+                          className={`text-[21px] sm:text-2xl font-extrabold leading-[1.32] tracking-tight cursor-pointer transition-all duration-300 ${
+                            isSungOrActive
+                              ? 'text-white'
+                              : 'text-black/45 hover:text-white/75'
+                          } ${isLastInWindow ? 'opacity-60 mask-b-fade' : ''}`}
+                        >
+                          {line.text}
+                        </p>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-6 text-left">
+                    <p className="text-xl font-extrabold text-white/90 leading-snug">
+                      Giai điệu không lời hoặc đang cập nhật lời bài hát...
+                    </p>
+                  </div>
+                )}
 
-          {/* Next Track */}
-          <button
-            onClick={playNext}
-            className="min-h-[48px] min-w-[48px] flex items-center justify-center text-[#f7f5f0] active:scale-90 transition-transform"
-          >
-            <SkipForward className="w-7 h-7 fill-[#f7f5f0]" />
-          </button>
+                <div className="mt-5 flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsLyricsOpen(true)}
+                    className="px-4 py-2 rounded-full bg-white text-black text-xs font-extrabold tracking-tight shadow-md hover:scale-105 active:scale-95 transition-transform"
+                  >
+                    Hiện lời bài hát
+                  </button>
+                </div>
+              </div>
 
-          {/* Repeat Cycle */}
-          <button
-            onClick={cycleRepeatMode}
-            className={`min-h-[44px] min-w-[44px] flex items-center justify-center relative transition-colors ${
-              repeatMode !== 'off' ? 'text-[#f47b64]' : 'text-[#a3aed0]'
-            }`}
-          >
-            {repeatMode === 'one' ? <Repeat1 className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
-            {repeatMode !== 'off' && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-[#f47b64]" />}
-          </button>
-        </div>
+              {/* 2. "Giới thiệu về nghệ sĩ" Card (Matches Screenshot 1 bottom) */}
+              <div
+                onClick={() => {
+                  if (onSelectArtistByName) {
+                    onClose();
+                    onSelectArtistByName(currentTrack.artist);
+                  }
+                }}
+                className="rounded-2xl overflow-hidden bg-[#181818] border border-white/5 shadow-2xl cursor-pointer group"
+              >
+                <div className="relative h-56 w-full overflow-hidden">
+                  <img
+                    src={currentTrack.coverUrl}
+                    alt={currentTrack.artist}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-[#181818]" />
+                  <h3 className="absolute top-4 left-4 text-sm font-bold text-white drop-shadow">
+                    Giới thiệu về nghệ sĩ
+                  </h3>
+                </div>
 
-        {/* Volume Scroller */}
-        <div className="mt-2 flex items-center gap-3 px-2">
-          <button
-            onClick={toggleMute}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center text-[#a3aed0]"
-          >
-            {isMuted || volume === 0 ? (
-              <VolumeX className="w-5 h-5 text-rose-500" />
-            ) : (
-              <Volume2 className="w-5 h-5" />
-            )}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={isMuted ? 0 : volume}
-            onChange={(e) => setVolume(parseFloat(e.target.value))}
-            className="flex-1 h-1 bg-[#222f5e] rounded-lg appearance-none accent-[#f47b64]"
-          />
-        </div>
+                <div className="p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="text-lg font-extrabold text-white truncate">
+                      {currentTrack.artist}
+                    </h4>
+                    <p className="text-xs text-white/60 mt-0.5">
+                      {currentTrack.genre} • {(currentTrack.plays || 0).toLocaleString('vi-VN')} lượt nghe
+                    </p>
+                  </div>
 
-        {/* Secondary Tool Buttons Row */}
-        <div className="mt-3 pt-3 border-t border-[#222f5e] flex items-center justify-around">
-          <button
-            onClick={() => {
-              onClose();
-              setIsLyricsOpen(true);
-            }}
-            className="flex flex-col items-center gap-1 text-[#a3aed0] active:text-[#f47b64] min-h-[44px] min-w-[44px] justify-center"
-          >
-            <Mic2 className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Lời bài hát</span>
-          </button>
-
-          <button
-            onClick={() => {
-              onClose();
-              setIsQueueOpen(true);
-            }}
-            className="flex flex-col items-center gap-1 text-[#a3aed0] active:text-[#f47b64] min-h-[44px] min-w-[44px] justify-center"
-          >
-            <ListMusic className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Hàng đợi</span>
-          </button>
-
-          <button
-            onClick={() => {
-              onClose();
-              onOpenSleepTimer();
-            }}
-            className="flex flex-col items-center gap-1 text-[#a3aed0] active:text-[#f47b64] min-h-[44px] min-w-[44px] justify-center"
-          >
-            <Moon className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Hẹn giờ</span>
-          </button>
-
-          <button
-            onClick={() => {
-              onClose();
-              setIsVisualizerOpen(true);
-            }}
-            className="flex flex-col items-center gap-1 text-[#a3aed0] active:text-[#f47b64] min-h-[44px] min-w-[44px] justify-center"
-          >
-            <Activity className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Sóng nhạc</span>
-          </button>
-        </div>
-      </div>
+                  <span className="px-4 py-1.5 rounded-full border border-white/30 text-xs font-bold text-white shrink-0 group-hover:border-white transition-colors">
+                    Khám phá
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
