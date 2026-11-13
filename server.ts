@@ -30,6 +30,7 @@ import {
   deleteObjectFromR2,
   getR2CatalogTracks,
   upsertR2CatalogTracks,
+  upsertR2CatalogTracksStrict,
   updateR2CatalogTrack,
   incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
@@ -37,8 +38,10 @@ import {
 } from './server-r2';
 import crypto from 'node:crypto';
 import {
+  DEFAULT_SPOTFLOW_API_KEY,
   ExistingTrackLookup,
   SpotflowIncomingItem,
+  enrichTrackMetadataFromSpotflow,
   ingestSpotflowTracks,
   resolveSpotflowEndpoint,
 } from './api/_lib/spotflow';
@@ -715,16 +718,29 @@ async function startServer() {
     persistTracks();
   }
 
-  // POST /api/spotflow/sync - Sync tracks from SpotFlow MP3 external API
+  // POST /api/spotflow/sync - Sync tracks or enrich metadata from SpotFlow MP3 external API
   app.post('/api/spotflow/sync', async (req, res) => {
     try {
-      const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = req.body || {};
-      if (!spotflowUrl || !apiKey) {
+      const body = req.body || {};
+      if (body.action === 'enrich') {
+        const enriched = await enrichTrackMetadataFromSpotflow({
+          fileName: body.fileName ? String(body.fileName) : undefined,
+          title: body.title ? String(body.title) : undefined,
+          artist: body.artist ? String(body.artist) : undefined,
+          apiKey: body.apiKey ? String(body.apiKey) : DEFAULT_SPOTFLOW_API_KEY,
+          saveCoverToR2: true,
+        });
+        return res.json({ ok: true, ...enriched });
+      }
+
+      const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = body;
+      const effectiveKey = String(apiKey || DEFAULT_SPOTFLOW_API_KEY).trim();
+      if (!spotflowUrl || !effectiveKey) {
         return res.status(400).json({ error: 'Vui lòng cung cấp URL của SpotFlow và API Key.' });
       }
 
       const endpoint = resolveSpotflowEndpoint(String(spotflowUrl));
-      const trimmedKey = String(apiKey).trim();
+      const trimmedKey = effectiveKey;
 
       const response = await fetch(endpoint, {
         method: 'GET',
@@ -817,10 +833,15 @@ async function startServer() {
     }
   });
 
-  // GET & POST /api/webhooks/spotflow - Webhook receiver for SpotFlow MP3 auto-push
+  // GET & POST /api/webhooks/spotflow - Webhook receiver for SpotFlow MP3 auto-push (Direct R2 & Fallback)
   app.get('/api/webhooks/spotflow', (_req, res) => {
-    const configuredSecret = (process.env.SPOTFLOW_WEBHOOK_SECRET || process.env.SPOTFLOW_API_KEY || '').trim();
+    const configuredSecret = (
+      process.env.SPOTFLOW_WEBHOOK_SECRET ||
+      process.env.SPOTFLOW_API_KEY ||
+      DEFAULT_SPOTFLOW_API_KEY
+    ).trim();
     res.json({
+      ok: true,
       status: 'ready',
       endpoint: '/api/webhooks/spotflow',
       webhookSecretConfigured: Boolean(configuredSecret),
@@ -829,25 +850,38 @@ async function startServer() {
 
   app.post('/api/webhooks/spotflow', async (req, res) => {
     try {
-      const configuredSecret = (process.env.SPOTFLOW_WEBHOOK_SECRET || process.env.SPOTFLOW_API_KEY || '').trim();
+      const configuredSecret = (
+        process.env.SPOTFLOW_WEBHOOK_SECRET ||
+        process.env.SPOTFLOW_API_KEY ||
+        DEFAULT_SPOTFLOW_API_KEY
+      ).trim();
       const rawApiKey = String(req.headers['x-api-key'] || '').trim();
       const authHeader = String(req.headers['authorization'] || '').trim();
       const bearerKey = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
       const providedKey = rawApiKey || bearerKey;
 
-      if (configuredSecret) {
-        const a = Buffer.from(providedKey, 'utf8');
-        const b = Buffer.from(configuredSecret, 'utf8');
-        if (!providedKey || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-          return res.status(401).json({
-            error: 'Unauthorized: Header X-API-Key không khớp với secret cấu hình.',
-          });
-        }
+      const allowedKeys = Array.from(
+        new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY].filter(Boolean))
+      );
+      const isValidKey =
+        Boolean(providedKey) &&
+        allowedKeys.some(expected => {
+          const a = Buffer.from(providedKey, 'utf8');
+          const b = Buffer.from(expected, 'utf8');
+          return a.length === b.length && crypto.timingSafeEqual(a, b);
+        });
+
+      if (!isValidKey) {
+        return res.status(401).json({
+          ok: false,
+          error: 'Unauthorized: Header X-API-Key không hợp lệ.',
+        });
       }
 
       const payload = req.body || {};
       if (payload.event === 'ping_test' || payload.test === true) {
         return res.status(200).json({
+          ok: true,
           success: true,
           ignored: true,
           event: payload.event || 'ping_test',
@@ -855,15 +889,45 @@ async function startServer() {
         });
       }
 
-      const trackItem: SpotflowIncomingItem | null =
+      const rawTrack: SpotflowIncomingItem | null =
         payload.track && typeof payload.track === 'object'
           ? payload.track
-          : payload.title || payload.downloadUrl
+          : payload.title || payload.downloadUrl || payload.r2AudioUrl || payload.audioUrl
             ? payload
             : null;
 
-      if (!trackItem || (!trackItem.title && !trackItem.downloadUrl)) {
-        return res.status(400).json({ error: 'Webhook payload không hợp lệ.' });
+      if (!rawTrack) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Webhook payload không hợp lệ (thiếu đối tượng track).',
+        });
+      }
+
+      const effectiveStorage = String(rawTrack.storage || payload.storage || '').trim();
+      const trackItem: SpotflowIncomingItem = {
+        ...rawTrack,
+        ...(effectiveStorage ? { storage: effectiveStorage } : {}),
+      };
+
+      const isDirectR2 =
+        effectiveStorage.toLowerCase() === 'r2' ||
+        Boolean(trackItem.r2AudioUrl && trackItem.r2AudioUrl.trim());
+
+      const resolvedDirectAudioUrl = (trackItem.r2AudioUrl || trackItem.audioUrl || '').trim();
+      const resolvedFallbackAudioUrl = (trackItem.downloadUrl || trackItem.audioUrl || '').trim();
+
+      if (isDirectR2 && !resolvedDirectAudioUrl) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Thiếu audioUrl (r2AudioUrl / audioUrl) trong dữ liệu bài hát.',
+        });
+      }
+
+      if (!isDirectR2 && !resolvedFallbackAudioUrl) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Thiếu downloadUrl hoặc audioUrl trong dữ liệu bài hát.',
+        });
       }
 
       const r2Configured = isR2Configured();
@@ -879,31 +943,51 @@ async function startServer() {
 
       const result = await ingestSpotflowTracks({
         items: [trackItem],
-        apiKey: providedKey || configuredSecret || undefined,
+        apiKey: providedKey || configuredSecret,
         saveToR2: true,
         existingTracks: existingCombined,
         sourceLabel: 'Webhook SpotFlow',
       });
 
-      applyIngestedTracksToMemory(result.addedTracks as Track[], result.updatedTracks as Track[]);
-      if (result.tracks.length > 0 && r2Configured) {
-        await upsertR2CatalogTracks(result.tracks);
+      if (result.failedAudioCount > 0 || result.tracks.length === 0) {
+        return res.status(422).json({
+          ok: false,
+          error:
+            result.failedAudioMessages[0] ||
+            'Không thể xử lý hoặc lưu tệp âm thanh cho bài hát.',
+        });
       }
 
-      const processedTrack = result.tracks[0] || null;
+      const processedTrack = result.tracks[0];
+      if (!processedTrack || !processedTrack.audioUrl) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Thiếu audioUrl hợp lệ sau khi xử lý bài hát.',
+        });
+      }
+
+      applyIngestedTracksToMemory(result.addedTracks as Track[], result.updatedTracks as Track[]);
+      if (r2Configured) {
+        await upsertR2CatalogTracksStrict(result.tracks);
+      }
 
       res.status(200).json({
+        ok: true,
         success: true,
         event: payload.event || 'track_downloaded',
+        storage: isDirectR2 ? 'r2' : effectiveStorage || 'fallback',
         addedCount: result.addedCount,
         updatedCount: result.updatedCount,
         skippedCount: result.skippedCount,
-        trackId: processedTrack?.id || null,
+        trackId: processedTrack.id,
         track: processedTrack,
       });
     } catch (err) {
       console.error('Webhook error:', err);
-      res.status(500).json({ error: 'Lỗi xử lý webhook' });
+      res.status(500).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Lỗi lưu Database khi xử lý webhook',
+      });
     }
   });
 

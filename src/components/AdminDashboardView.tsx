@@ -109,8 +109,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [uploadProgressText, setUploadProgressText] = useState<string | null>(null);
 
   // SpotFlow MP3 integration state
-  const [spotflowUrl, setSpotflowUrl] = useState<string>('');
-  const [spotflowApiKey, setSpotflowApiKey] = useState<string>('');
+  const [spotflowUrl, setSpotflowUrl] = useState<string>(
+    'https://musictool-ytsg.onrender.com/api/external/tracks'
+  );
+  const [spotflowApiKey, setSpotflowApiKey] = useState<string>(
+    'sf_live_b014f490c5f75dc3f64bd45d9ab82121'
+  );
   const [spotflowSaveToR2, setSpotflowSaveToR2] = useState<boolean>(true);
   const [isSyncingSpotflow, setIsSyncingSpotflow] = useState<boolean>(false);
   const [spotflowNotice, setSpotflowNotice] = useState<{
@@ -472,25 +476,44 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           );
         });
         const finalAudioUrl = r2Res.audioUrl;
+        const r2AudioKey = r2Res.key;
+
+        // Optional SpotFlow Metadata Enrichment (/api/external/enrich) for coverUrl, syncedLyrics, plainLyrics
+        setUploadProgressText(
+          `Đang làm giàu ảnh bìa & lời nhạc qua SpotFlow (${i + 1}/${totalCount}): ${item.title}...`
+        );
+        const enriched = await musicApi.enrichTrackWithSpotflow({
+          fileName: item.fileName,
+          title: item.title,
+          artist: item.artist,
+          apiKey: spotflowApiKey || undefined,
+        });
 
         setUploadProgressText(
           `Đang lưu bài hát (${i + 1}/${totalCount}): ${item.title}...`
         );
         const preservedCover =
-          existingMatch?.coverUrl &&
+          enriched?.coverUrl ||
+          (existingMatch?.coverUrl &&
           !existingMatch.coverUrl.includes('photo-1511671782779-c97d3d27a1d4')
             ? existingMatch.coverUrl
-            : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
+            : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80');
 
         const [savedTrack] = await musicApi.addBatchTracks([
           {
             id: existingMatch?.id,
-            title: existingMatch?.title || item.title.trim(),
-            artist: existingMatch?.artist || item.artist.trim() || 'Nghệ sĩ chưa rõ',
-            album: existingMatch?.album || item.album.trim(),
+            title: enriched?.title || existingMatch?.title || item.title.trim(),
+            artist:
+              enriched?.artist ||
+              existingMatch?.artist ||
+              item.artist.trim() ||
+              'Nghệ sĩ chưa rõ',
+            album: enriched?.album || existingMatch?.album || item.album.trim(),
             audioUrl: finalAudioUrl,
+            r2AudioKey,
+            r2CoverKey: enriched?.r2CoverKey || existingMatch?.r2CoverKey,
             genre: item.genre || existingMatch?.genre,
-            duration: item.duration || existingMatch?.duration,
+            duration: item.duration || enriched?.duration || existingMatch?.duration,
             bpm: item.bpm ?? existingMatch?.bpm,
             mood: item.mood || existingMatch?.mood,
             plays: existingMatch?.plays ?? 0,
@@ -501,10 +524,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 ? 'Lưu trữ trên Cloudflare R2 CDN'
                 : 'Tải lên bởi quản trị viên'),
             lyricsText: item.lyricsText,
-            lyrics: !item.lyricsText?.trim() ? existingMatch?.lyrics : undefined,
-            syncedLyrics: !item.lyricsText?.trim() ? existingMatch?.syncedLyrics : undefined,
-            plainLyrics: !item.lyricsText?.trim() ? existingMatch?.plainLyrics : undefined,
-            lyricsMode: !item.lyricsText?.trim() ? existingMatch?.lyricsMode : undefined,
+            lyrics: !item.lyricsText?.trim()
+              ? enriched?.lyrics && enriched.lyrics.length > 0
+                ? enriched.lyrics
+                : existingMatch?.lyrics
+              : undefined,
+            syncedLyrics: !item.lyricsText?.trim()
+              ? enriched?.syncedLyrics || existingMatch?.syncedLyrics
+              : undefined,
+            plainLyrics: !item.lyricsText?.trim()
+              ? enriched?.plainLyrics || existingMatch?.plainLyrics
+              : undefined,
+            lyricsMode: !item.lyricsText?.trim()
+              ? enriched?.lyricsMode && enriched.lyricsMode !== 'none'
+                ? enriched.lyricsMode
+                : existingMatch?.lyricsMode
+              : undefined,
             spotifyTrackId: existingMatch?.spotifyTrackId,
             spotifyUrl: existingMatch?.spotifyUrl,
             coverUrl: preservedCover,
@@ -568,7 +603,16 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         tracks.map(async track => {
           const ai = map.get(track.id);
           if (!ai) return track;
-          const patch = {
+          const isUnaccentedTitle =
+            !/[^\u0000-\u007f]/.test(track.title) &&
+            track.title === track.title.toLowerCase();
+          const isUnaccentedArtist =
+            track.artist === 'Nghệ sĩ chưa rõ' ||
+            (!/[^\u0000-\u007f]/.test(track.artist) &&
+              track.artist === track.artist.toLowerCase());
+          const patch: Partial<Track> = {
+            ...(isUnaccentedTitle && ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
+            ...(isUnaccentedArtist && ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
             genre: ai.genre,
             mood: ai.mood,
             bpm: ai.bpm,
@@ -581,7 +625,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       );
 
       onTracksUpdated(updated);
-      setUploadSuccessToast(`AI đã phân loại lại toàn bộ ${updated.length} bài hát trên Soundly!`);
+      setUploadSuccessToast(`AI đã khôi phục tên có dấu & phân loại lại toàn bộ ${updated.length} bài hát!`);
       setTimeout(() => setUploadSuccessToast(null), 4000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Lỗi khi phân loại lại kho nhạc bằng AI.';

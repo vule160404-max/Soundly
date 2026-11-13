@@ -62,6 +62,8 @@
         "aiReason": { "type": "string", "maxLength": 500 },
         "spotifyTrackId": { "type": "string", "maxLength": 128 },
         "spotifyUrl": { "type": "string", "maxLength": 500 },
+        "r2AudioKey": { "type": "string", "maxLength": 500 },
+        "r2CoverKey": { "type": "string", "maxLength": 500 },
         "syncedLyrics": { "type": "string", "maxLength": 50000 },
         "plainLyrics": { "type": "string", "maxLength": 50000 },
         "lyricsMode": { "type": "string", "maxLength": 20, "enum": ["synced", "plain", "none"] }

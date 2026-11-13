@@ -125,6 +125,8 @@ export default async function handler(
           plays: typeof item.plays === 'number' ? item.plays : 0,
           ...(item.spotifyTrackId ? { spotifyTrackId: String(item.spotifyTrackId) } : {}),
           ...(item.spotifyUrl ? { spotifyUrl: String(item.spotifyUrl) } : {}),
+          ...(item.r2AudioKey ? { r2AudioKey: String(item.r2AudioKey) } : {}),
+          ...(item.r2CoverKey ? { r2CoverKey: String(item.r2CoverKey) } : {}),
           ...(item.syncedLyrics ? { syncedLyrics: String(item.syncedLyrics) } : {}),
           ...(item.plainLyrics ? { plainLyrics: String(item.plainLyrics) } : {}),
           ...(item.lyricsMode ? { lyricsMode: item.lyricsMode } : {}),

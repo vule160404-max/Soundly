@@ -21,6 +21,8 @@ export interface Track {
   aiReason?: string;
   spotifyTrackId?: string;
   spotifyUrl?: string;
+  r2AudioKey?: string;
+  r2CoverKey?: string;
   syncedLyrics?: string;
   plainLyrics?: string;
   lyricsMode?: 'synced' | 'plain' | 'none';

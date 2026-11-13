@@ -10,6 +10,7 @@ import {
   PutBucketCorsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { restoreVietnameseMetadataFromSlug } from './ai.js';
 
 export interface R2Config {
   accountId: string;
@@ -37,6 +38,8 @@ export interface R2StoredTrack {
   aiReason?: string;
   spotifyTrackId?: string;
   spotifyUrl?: string;
+  r2AudioKey?: string;
+  r2CoverKey?: string;
   syncedLyrics?: string;
   plainLyrics?: string;
   lyricsMode?: 'synced' | 'plain' | 'none';
@@ -207,10 +210,25 @@ export async function testR2Connection(): Promise<{
 function sanitizeFileName(name: string): string {
   return name
     .toLowerCase()
+    .replace(/đ/g, 'd')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9.-]/g, '_')
-    .replace(/_+/g, '_');
+    .replace(/[^a-z0-9.-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function buildSlugTimestampKey(
+  folder: 'tracks' | 'covers',
+  originalFileName: string,
+  defaultExt: string
+): string {
+  const raw = (originalFileName || `file.${defaultExt}`).trim();
+  const extMatch = raw.match(/\.([a-zA-Z0-9]{2,5})$/);
+  const ext = (extMatch ? extMatch[1] : defaultExt).toLowerCase();
+  const baseWithoutExt = raw.replace(/\.[^/.]+$/, '');
+  const slug = sanitizeFileName(baseWithoutExt).slice(0, 100) || folder.slice(0, -1);
+  return `${folder}/${slug}-${Date.now()}.${ext}`;
 }
 
 export function buildR2PublicUrl(cfg: R2Config, key: string): string {
@@ -236,8 +254,7 @@ export async function createR2PresignedUploadUrl(
 
   await ensureR2BucketCors(cfg);
   const client = getR2Client(cfg);
-  const cleanName = sanitizeFileName(originalFileName || 'audio.mp3');
-  const key = `tracks/${Date.now()}-${cleanName}`;
+  const key = buildSlugTimestampKey('tracks', originalFileName || 'audio.mp3', 'mp3');
 
   const command = new PutObjectCommand({
     Bucket: cfg.bucketName,
@@ -265,8 +282,7 @@ export async function uploadBufferToR2(
   }
 
   const client = getR2Client(cfg);
-  const cleanName = sanitizeFileName(originalFileName);
-  const key = `tracks/${Date.now()}-${cleanName}`;
+  const key = buildSlugTimestampKey('tracks', originalFileName || 'audio.mp3', 'mp3');
 
   await client.send(
     new PutObjectCommand({
@@ -433,8 +449,7 @@ export async function uploadImageBufferToR2(
   }
 
   const client = getR2Client(cfg);
-  const cleanName = sanitizeFileName(originalFileName || 'cover.jpg');
-  const key = `covers/${Date.now()}-${cleanName}`;
+  const key = buildSlugTimestampKey('covers', originalFileName || 'cover.jpg', 'jpg');
 
   await client.send(
     new PutObjectCommand({
@@ -650,22 +665,219 @@ export async function getR2ObjectRange(
   };
 }
 
-function parseTrackMetaFromKey(key: string): { title: string; artist: string } {
+const IMAGE_EXT_REGEX = /\.(jpe?g|png|webp|avif)$/i;
+
+function extractFileStemFromKey(key: string): string {
   const fileName = key.split('/').pop() || key;
-  const withoutTimestamp = fileName.replace(/^\d{10,}-/, '');
-  const withoutExt = withoutTimestamp.replace(/\.[^/.]+$/, '');
-  const readable = withoutExt.replace(/_/g, ' ').trim();
+  const withoutExt = fileName.replace(/\.[^/.]+$/, '');
+  const withoutTimestamp = withoutExt
+    .replace(/^\d{10,}-/, '')
+    .replace(/-\d{10,}$/, '');
+  return withoutTimestamp.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeStemKey(raw: string, stripD: boolean = false): string {
+  let out = (raw || '')
+    .toLowerCase()
+    .replace(/đ/g, 'd')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (stripD) {
+    out = out.replace(/\bd/g, '').replace(/\s+/g, ' ').trim();
+  }
+  return out;
+}
+
+function hasVietnameseDiacriticsOrProperCase(text?: string): boolean {
+  if (!text) return false;
+  if (/[^\u0000-\u007f]/.test(text)) return true;
+  // Check if it has uppercase letters (not all-lowercase filename slug)
+  return text !== text.toLowerCase();
+}
+
+function isLikelyRawSlugText(text?: string): boolean {
+  if (!text || !text.trim()) return true;
+  const t = text.trim();
+  if (t === 'Nghệ sĩ chưa rõ' || t === 'Bài hát trên R2') return true;
+  // All lowercase ASCII with spaces/dots is a raw filename slug
+  return !/[^\u0000-\u007f]/.test(t) && t === t.toLowerCase();
+}
+
+function pickBetterText(a?: string, b?: string, fallback: string = ''): string {
+  const cleanA = (a || '').trim();
+  const cleanB = (b || '').trim();
+  if (!cleanA) return cleanB || fallback;
+  if (!cleanB) return cleanA || fallback;
+
+  const aHasDiacritics = /[^\u0000-\u007f]/.test(cleanA);
+  const bHasDiacritics = /[^\u0000-\u007f]/.test(cleanB);
+  if (aHasDiacritics && !bHasDiacritics) return cleanA;
+  if (bHasDiacritics && !aHasDiacritics) return cleanB;
+
+  const aIsSlug = isLikelyRawSlugText(cleanA);
+  const bIsSlug = isLikelyRawSlugText(cleanB);
+  if (!aIsSlug && bIsSlug) return cleanA;
+  if (!bIsSlug && aIsSlug) return cleanB;
+
+  return cleanA;
+}
+
+function readSynchsafeIntR2(buf: Buffer, offset: number): number {
+  return (
+    ((buf[offset] & 0x7f) << 21) |
+    ((buf[offset + 1] & 0x7f) << 14) |
+    ((buf[offset + 2] & 0x7f) << 7) |
+    (buf[offset + 3] & 0x7f)
+  );
+}
+
+function decodeId3TextPayload(frameData: Buffer): string {
+  if (!frameData || frameData.length <= 1) return '';
+  const encoding = frameData[0];
+  const payload = frameData.subarray(1);
+  let text = '';
+
+  if (encoding === 0) {
+    const utf8 = payload.toString('utf8').replace(/\0+$/g, '').trim();
+    text = utf8.includes('\ufffd')
+      ? payload.toString('latin1').replace(/\0+$/g, '').trim()
+      : utf8;
+  } else if (encoding === 1) {
+    if (payload.length >= 2 && payload[0] === 0xfe && payload[1] === 0xff) {
+      const swapped = Buffer.alloc(payload.length - 2);
+      for (let i = 2; i + 1 < payload.length; i += 2) {
+        swapped[i - 2] = payload[i + 1];
+        swapped[i - 1] = payload[i];
+      }
+      text = swapped.toString('utf16le');
+    } else if (payload.length >= 2 && payload[0] === 0xff && payload[1] === 0xfe) {
+      text = payload.subarray(2).toString('utf16le');
+    } else {
+      text = payload.toString('utf16le');
+    }
+  } else if (encoding === 2) {
+    const swapped = Buffer.alloc(payload.length);
+    for (let i = 0; i + 1 < payload.length; i += 2) {
+      swapped[i] = payload[i + 1];
+      swapped[i + 1] = payload[i];
+    }
+    text = swapped.toString('utf16le');
+  } else {
+    text = payload.toString('utf8');
+  }
+
+  return text.replace(/\0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function parseId3TextFramesFromBuffer(buf: Buffer): {
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationSec?: number;
+  tagByteSize: number;
+} {
+  if (!buf || buf.length < 16 || buf.toString('ascii', 0, 3) !== 'ID3') {
+    return { tagByteSize: 0 };
+  }
+  const majorVersion = buf[3];
+  if (majorVersion < 2 || majorVersion > 4) {
+    return { tagByteSize: 0 };
+  }
+  const tagSize = readSynchsafeIntR2(buf, 6);
+  const tagByteSize = 10 + tagSize;
+  const tagEnd = Math.min(buf.length, tagByteSize);
+  const body = buf.subarray(10, tagEnd);
+
+  let offset = 0;
+  let title: string | undefined;
+  let artist: string | undefined;
+  let album: string | undefined;
+  let durationSec: number | undefined;
+
+  while (offset < body.length) {
+    if (majorVersion === 2) {
+      if (offset + 6 > body.length) break;
+      const frameId = body.toString('ascii', offset, offset + 3);
+      if (!/^[A-Z0-9]{3}$/.test(frameId)) break;
+      const frameSize =
+        (body[offset + 3] << 16) | (body[offset + 4] << 8) | body[offset + 5];
+      offset += 6;
+      if (frameSize <= 0 || offset + frameSize > body.length) break;
+      const frameData = body.subarray(offset, offset + frameSize);
+      offset += frameSize;
+
+      if (frameId === 'TT2') title = decodeId3TextPayload(frameData) || title;
+      else if (frameId === 'TP1') artist = decodeId3TextPayload(frameData) || artist;
+      else if (frameId === 'TAL') album = decodeId3TextPayload(frameData) || album;
+      else if (frameId === 'TLE') {
+        const ms = parseInt(decodeId3TextPayload(frameData), 10);
+        if (ms > 1000) durationSec = Math.round(ms / 1000);
+      }
+    } else {
+      if (offset + 10 > body.length) break;
+      const frameId = body.toString('ascii', offset, offset + 4);
+      if (!/^[A-Z0-9]{4}$/.test(frameId)) break;
+      const frameSize =
+        majorVersion === 4
+          ? readSynchsafeIntR2(body, offset + 4)
+          : body.readUInt32BE(offset + 4);
+      offset += 10;
+      if (frameSize <= 0 || offset + frameSize > body.length) break;
+      const frameData = body.subarray(offset, offset + frameSize);
+      offset += frameSize;
+
+      if (frameId === 'TIT2') title = decodeId3TextPayload(frameData) || title;
+      else if (frameId === 'TPE1') artist = decodeId3TextPayload(frameData) || artist;
+      else if (frameId === 'TALB') album = decodeId3TextPayload(frameData) || album;
+      else if (frameId === 'TLEN') {
+        const ms = parseInt(decodeId3TextPayload(frameData), 10);
+        if (ms > 1000) durationSec = Math.round(ms / 1000);
+      }
+    }
+    if (title && artist && album && durationSec) break;
+  }
+
+  return { title, artist, album, durationSec, tagByteSize };
+}
+
+function estimateMp3DurationFromSize(sizeBytes?: number, tagByteSize: number = 0): number {
+  if (!sizeBytes || sizeBytes <= 50000) return 210;
+  const audioBytes = Math.max(40000, sizeBytes - Math.min(tagByteSize, sizeBytes * 0.3));
+  // SpotFlow downloads 320kbps MP3s (~40,000 bytes/sec). If file is smaller (<4.5MB), check if 128kbps (~16,000 bytes/sec).
+  const secAt320 = Math.round(audioBytes / 40000);
+  if (secAt320 >= 95 && secAt320 <= 600) {
+    return secAt320;
+  }
+  const secAt128 = Math.round(audioBytes / 16000);
+  if (secAt128 >= 95 && secAt128 <= 420) {
+    return secAt128;
+  }
+  return Math.max(60, Math.min(600, secAt320));
+}
+
+function parseTrackMetaFromKey(key: string): {
+  title: string;
+  artist: string;
+  genreHint?: string;
+} {
+  const readable = extractFileStemFromKey(key);
+  let rawArtist = 'Nghệ sĩ chưa rõ';
+  let rawTitle = readable || 'Bài hát trên R2';
 
   if (readable.includes(' - ')) {
     const parts = readable.split(' - ');
-    return {
-      artist: parts[0].trim() || 'Nghệ sĩ chưa rõ',
-      title: parts.slice(1).join(' - ').trim() || readable,
-    };
+    rawArtist = parts[0].trim() || 'Nghệ sĩ chưa rõ';
+    rawTitle = parts.slice(1).join(' - ').trim() || readable;
   }
+
+  const restored = restoreVietnameseMetadataFromSlug(rawTitle, rawArtist);
   return {
-    artist: 'Nghệ sĩ chưa rõ',
-    title: readable || 'Bài hát trên R2',
+    artist: restored.artist || rawArtist,
+    title: restored.title || rawTitle,
+    genreHint: restored.genreHint,
   };
 }
 
@@ -712,24 +924,31 @@ export async function saveR2CatalogTracks(
   }
 }
 
-function normalizeR2CompareText(raw?: string): string {
-  return (raw || '')
+function normalizeR2CompareText(raw?: string, stripD: boolean = false): string {
+  let out = (raw || '')
     .toLowerCase()
+    .replace(/đ/g, 'd')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if (stripD) {
+    out = out.replace(/\bd/g, '').replace(/\s+/g, ' ').trim();
+  }
+  return out;
 }
 
-function normalizeR2CoreTitle(rawTitle?: string): string {
+function normalizeR2CoreTitle(rawTitle?: string, stripD: boolean = false): string {
   const cleaned = (rawTitle || '')
     .replace(/(?:\(|\[)?\b(?:feat\.?|ft\.?|featuring)\s+[^)\]]+(?:\)|\])?/gi, ' ')
     .replace(/\b(?:official\s+mv|official\s+video|official\s+audio|lyric\s+video|320kbps|128kbps)\b/gi, ' ')
     .replace(/\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i, ' ')
     .replace(/^[0-9]{1,3}[\s._-]+/, '');
-  return normalizeR2CompareText(cleaned) || normalizeR2CompareText(rawTitle);
+  return (
+    normalizeR2CompareText(cleaned, stripD) ||
+    normalizeR2CompareText(rawTitle, stripD)
+  );
 }
 
 function extractR2ArtistTokens(rawArtist?: string, rawTitle?: string): string[] {
@@ -774,14 +993,22 @@ function areR2TracksDuplicate(
     a.audioUrl &&
     b.audioUrl &&
     !a.audioUrl.startsWith('blob:') &&
-    a.audioUrl.trim() === b.audioUrl.trim()
+    extractR2Key(a.audioUrl) &&
+    extractR2Key(a.audioUrl) === extractR2Key(b.audioUrl)
   ) {
     return true;
   }
 
   const titleA = normalizeR2CoreTitle(a.title);
   const titleB = normalizeR2CoreTitle(b.title);
-  if (!titleA || !titleB || titleA !== titleB) return false;
+  const titleMatch =
+    Boolean(titleA && titleB) &&
+    (titleA === titleB ||
+      (titleA.length >= 6 &&
+        titleB.length >= 6 &&
+        normalizeR2CoreTitle(a.title, true) === normalizeR2CoreTitle(b.title, true)));
+
+  if (!titleMatch) return false;
 
   const artistsA = extractR2ArtistTokens(a.artist, a.title);
   const artistsB = extractR2ArtistTokens(b.artist, b.title);
@@ -810,7 +1037,7 @@ function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2S
     Boolean(t.plainLyrics?.trim()) ||
     (Array.isArray(t.lyrics) &&
       t.lyrics.length > 2 &&
-      !t.lyrics.every(l => l.text.startsWith('Đang phát bản nhạc')));
+      !t.lyrics.every(l => l.text.startsWith('Đang phát bản nhạc') || l.text.startsWith('Đang phát:')));
 
   const lyricsSource = hasUsableLyrics(bestAudio)
     ? bestAudio
@@ -825,12 +1052,38 @@ function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2S
         ? other.coverUrl
         : bestAudio.coverUrl || other.coverUrl || DEFAULT_COVER_URL;
 
+  const bestTitle = pickBetterText(bestAudio.title, other.title, 'Bài hát');
+  const bestArtist = pickBetterText(bestAudio.artist, other.artist, 'Nghệ sĩ chưa rõ');
+  const bestAlbum =
+    bestAudio.album && bestAudio.album !== 'Kho nhạc Cloudflare R2'
+      ? bestAudio.album
+      : other.album || bestAudio.album || 'Kho nhạc Soundly';
+  const bestDuration =
+    bestAudio.duration && bestAudio.duration !== 210
+      ? bestAudio.duration
+      : other.duration && other.duration !== 210
+        ? other.duration
+        : bestAudio.duration || other.duration || 210;
+  const bestGenre =
+    bestAudio.genre && bestAudio.genre !== 'Pop'
+      ? bestAudio.genre
+      : other.genre || bestAudio.genre || 'Pop';
+
+  // Prefer non-stub ID if available
+  const bestId =
+    !bestAudio.id.startsWith('r2-') || other.id.startsWith('r2-')
+      ? bestAudio.id
+      : other.id || bestAudio.id;
+
   return {
     ...other,
     ...bestAudio,
-    id: bestAudio.id || other.id,
-    title: bestAudio.title || other.title,
-    artist: bestAudio.artist || other.artist,
+    id: bestId,
+    title: bestTitle,
+    artist: bestArtist,
+    album: bestAlbum,
+    genre: bestGenre,
+    duration: bestDuration,
     audioUrl: bestAudio.audioUrl || other.audioUrl,
     coverUrl,
     plays: Math.max(Number(primary.plays) || 0, Number(secondary.plays) || 0),
@@ -849,6 +1102,12 @@ function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2S
       : {}),
     ...(bestAudio.spotifyUrl || other.spotifyUrl
       ? { spotifyUrl: bestAudio.spotifyUrl || other.spotifyUrl }
+      : {}),
+    ...(bestAudio.r2AudioKey || other.r2AudioKey
+      ? { r2AudioKey: bestAudio.r2AudioKey || other.r2AudioKey }
+      : {}),
+    ...(bestAudio.r2CoverKey || other.r2CoverKey
+      ? { r2CoverKey: bestAudio.r2CoverKey || other.r2CoverKey }
       : {}),
   };
 }
@@ -875,8 +1134,12 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
     const client = getR2Client(cfg);
     const manifestTracks = await readR2CatalogManifest(client, cfg.bucketName);
 
-    // Also scan tracks/ prefix in R2 to recover any audio files uploaded before manifest existed
-    const listedKeys: Array<{ key: string; lastModified?: Date }> = [];
+    // 1. Scan tracks/ prefix in R2 (including Size so we can compute real duration!)
+    const listedTrackObjects: Array<{
+      key: string;
+      lastModified?: Date;
+      size?: number;
+    }> = [];
     let continuationToken: string | undefined;
     do {
       const listRes = await client.send(
@@ -888,9 +1151,10 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       );
       for (const obj of listRes.Contents || []) {
         if (obj.Key && AUDIO_EXT_REGEX.test(obj.Key)) {
-          listedKeys.push({
+          listedTrackObjects.push({
             key: obj.Key,
             lastModified: obj.LastModified,
+            size: obj.Size,
           });
         }
       }
@@ -899,21 +1163,96 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
         : undefined;
     } while (continuationToken);
 
+    // 2. Scan covers/ prefix in R2 so any track missing its coverUrl automatically pairs with covers/
+    const coverByStem = new Map<string, string>();
+    const coverByDStrippedStem = new Map<string, string>();
+    let coverToken: string | undefined;
+    do {
+      const coverRes = await client.send(
+        new ListObjectsV2Command({
+          Bucket: cfg.bucketName,
+          Prefix: 'covers/',
+          ContinuationToken: coverToken,
+        })
+      );
+      for (const obj of coverRes.Contents || []) {
+        if (obj.Key && IMAGE_EXT_REGEX.test(obj.Key)) {
+          const coverUrl = buildR2PublicUrl(cfg, obj.Key);
+          const rawStem = extractFileStemFromKey(obj.Key);
+          const stemNorm = normalizeStemKey(rawStem, false);
+          const stemNoD = normalizeStemKey(rawStem, true);
+          if (stemNorm && !coverByStem.has(stemNorm)) {
+            coverByStem.set(stemNorm, coverUrl);
+          }
+          if (stemNoD && !coverByDStrippedStem.has(stemNoD)) {
+            coverByDStrippedStem.set(stemNoD, coverUrl);
+          }
+          // Also index by title-only part after " - "
+          if (rawStem.includes(' - ')) {
+            const titlePart = rawStem.split(' - ').slice(1).join(' - ').trim();
+            const titleNorm = normalizeStemKey(titlePart, false);
+            const titleNoD = normalizeStemKey(titlePart, true);
+            if (titleNorm && !coverByStem.has(titleNorm)) {
+              coverByStem.set(titleNorm, coverUrl);
+            }
+            if (titleNoD && !coverByDStrippedStem.has(titleNoD)) {
+              coverByDStrippedStem.set(titleNoD, coverUrl);
+            }
+          }
+        }
+      }
+      coverToken = coverRes.IsTruncated
+        ? coverRes.NextContinuationToken
+        : undefined;
+    } while (coverToken);
+
+    const findMatchingCoverInR2 = (
+      audioKey: string,
+      title: string,
+      artist: string
+    ): string | undefined => {
+      const candidates = [
+        extractFileStemFromKey(audioKey),
+        `${artist} - ${title}`,
+        title,
+      ];
+      for (const cand of candidates) {
+        const k1 = normalizeStemKey(cand, false);
+        if (k1 && coverByStem.has(k1)) return coverByStem.get(k1);
+        const k2 = normalizeStemKey(cand, true);
+        if (k2 && coverByDStrippedStem.has(k2)) return coverByDStrippedStem.get(k2);
+      }
+      return undefined;
+    };
+
+    const sizeByTrackKey = new Map<string, number>();
+    for (const item of listedTrackObjects) {
+      if (typeof item.size === 'number' && item.size > 0) {
+        sizeByTrackKey.set(item.key, item.size);
+      }
+    }
+
     const knownKeys = new Set(
-      manifestTracks.map(t => extractR2Key(t.audioUrl)).filter(Boolean)
+      manifestTracks
+        .flatMap(t => [t.r2AudioKey, extractR2Key(t.audioUrl)])
+        .filter((k): k is string => Boolean(k))
     );
     const knownUrls = new Set(
       manifestTracks.map(t => t.audioUrl).filter(Boolean)
     );
 
     const recoveredTracks: R2StoredTrack[] = [];
-    for (const item of listedKeys.sort(
+    for (const item of listedTrackObjects.sort(
       (a, b) =>
         (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
     )) {
       const publicUrl = buildR2PublicUrl(cfg, item.key);
       if (knownKeys.has(item.key) || knownUrls.has(publicUrl)) continue;
       const meta = parseTrackMetaFromKey(item.key);
+      const matchedCover =
+        findMatchingCoverInR2(item.key, meta.title, meta.artist) ||
+        DEFAULT_COVER_URL;
+      const estimatedDuration = estimateMp3DurationFromSize(item.size);
       const safeId = `r2-${item.key
         .replace(/^tracks\//, '')
         .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -924,34 +1263,128 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
         artist: meta.artist,
         album: 'Kho nhạc Cloudflare R2',
         audioUrl: publicUrl,
-        coverUrl: DEFAULT_COVER_URL,
-        duration: 210,
-        genre: 'Pop',
+        coverUrl: matchedCover,
+        duration: estimatedDuration,
+        genre: meta.genreHint || 'Pop',
         releaseYear:
           item.lastModified?.getFullYear() || new Date().getFullYear(),
         bpm: 110,
         mood: 'Thư giãn',
-        aiClassified: false,
+        aiClassified: Boolean(meta.genreHint),
         aiReason: 'Khôi phục tự động từ Cloudflare R2',
         lyrics: [{ time: 5, text: `Đang phát: ${meta.title}` }],
         plays: 0,
+        r2AudioKey: item.key,
       });
     }
 
+    let manifestUpdated = false;
     const healedManifest = manifestTracks.map(t => {
       const next = { ...t };
+      const audioKey = extractR2Key(next.audioUrl);
       if (next.audioUrl && next.audioUrl.includes('.r2.cloudflarestorage.com/')) {
-        const k = extractR2Key(next.audioUrl);
-        if (k) next.audioUrl = buildR2PublicUrl(cfg, k);
+        if (audioKey) next.audioUrl = buildR2PublicUrl(cfg, audioKey);
       }
       if (next.coverUrl && next.coverUrl.includes('.r2.cloudflarestorage.com/')) {
         const k = extractR2Key(next.coverUrl);
         if (k) next.coverUrl = buildR2PublicUrl(cfg, k);
       }
+      // Heal raw slug titles/artists in existing manifest
+      if (isLikelyRawSlugText(next.title) || isLikelyRawSlugText(next.artist)) {
+        const restored = restoreVietnameseMetadataFromSlug(next.title, next.artist);
+        if (restored.title !== next.title || restored.artist !== next.artist) {
+          next.title = restored.title;
+          next.artist = restored.artist;
+          if (restored.genreHint && next.genre === 'Pop') {
+            next.genre = restored.genreHint;
+          }
+          manifestUpdated = true;
+        }
+      }
+      // Heal missing coverUrl from covers/ folder on R2
+      if (!next.coverUrl || next.coverUrl === DEFAULT_COVER_URL) {
+        const foundCover = findMatchingCoverInR2(
+          audioKey || next.id,
+          next.title,
+          next.artist
+        );
+        if (foundCover) {
+          next.coverUrl = foundCover;
+          manifestUpdated = true;
+        }
+      }
+      // Heal placeholder 210s (3:30) duration using real R2 object byte size
+      if ((!next.duration || next.duration === 210) && audioKey && sizeByTrackKey.has(audioKey)) {
+        const est = estimateMp3DurationFromSize(sizeByTrackKey.get(audioKey));
+        if (est !== 210) {
+          next.duration = est;
+          manifestUpdated = true;
+        }
+      }
       return next;
     });
 
-    return deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
+    // 3. For up to 12 tracks still missing Vietnamese diacritics or using 210s, inspect ID3v2 header directly from R2 MP3
+    const combinedList = deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
+    const tracksNeedingId3Probe = combinedList
+      .filter(
+        t =>
+          isStoredR2Audio(t.audioUrl) &&
+          (isLikelyRawSlugText(t.title) || isLikelyRawSlugText(t.artist))
+      )
+      .slice(0, 12);
+
+    if (tracksNeedingId3Probe.length > 0) {
+      await Promise.allSettled(
+        tracksNeedingId3Probe.map(async track => {
+          const key = extractR2Key(track.audioUrl);
+          if (!key || !key.startsWith('tracks/')) return;
+          const res = await client.send(
+            new GetObjectCommand({
+              Bucket: cfg.bucketName,
+              Key: key,
+              Range: 'bytes=0-32767',
+            })
+          );
+          const bytes = await res.Body?.transformToByteArray();
+          if (!bytes || bytes.length < 16) return;
+          const id3 = parseId3TextFramesFromBuffer(Buffer.from(bytes));
+          if (id3.title && hasVietnameseDiacriticsOrProperCase(id3.title)) {
+            track.title = id3.title;
+            manifestUpdated = true;
+          }
+          if (id3.artist && hasVietnameseDiacriticsOrProperCase(id3.artist)) {
+            track.artist = id3.artist;
+            manifestUpdated = true;
+          }
+          if (id3.album && track.album === 'Kho nhạc Cloudflare R2') {
+            track.album = id3.album;
+            manifestUpdated = true;
+          }
+          if (id3.durationSec && id3.durationSec > 30) {
+            track.duration = id3.durationSec;
+            manifestUpdated = true;
+          }
+          // Re-check cover match with newly discovered ID3 title/artist
+          if (!track.coverUrl || track.coverUrl === DEFAULT_COVER_URL) {
+            const matchedCover = findMatchingCoverInR2(key, track.title, track.artist);
+            if (matchedCover) {
+              track.coverUrl = matchedCover;
+              manifestUpdated = true;
+            }
+          }
+        })
+      );
+    }
+
+    const finalDeduped = deduplicateR2TrackList(combinedList);
+
+    // Persist healed/recovered tracks into catalog/tracks.json so future loads are instant
+    if (manifestUpdated || recoveredTracks.length > 0) {
+      void saveR2CatalogTracks(finalDeduped);
+    }
+
+    return finalDeduped;
   } catch (err) {
     console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
     return [];
@@ -972,6 +1405,33 @@ export async function upsertR2CatalogTracks(
   return merged;
 }
 
+export async function upsertR2CatalogTracksStrict(
+  incomingTracks: R2StoredTrack[]
+): Promise<R2StoredTrack[]> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    const missing = getMissingR2EnvVars(cfg);
+    throw new Error(
+      `Database Cloudflare R2 chưa được cấu hình (Thiếu: ${missing.join(', ')}).`
+    );
+  }
+
+  const client = getR2Client(cfg);
+  const existing = await readR2CatalogManifest(client, cfg.bucketName);
+  const merged = deduplicateR2TrackList([...incomingTracks, ...existing]);
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: CATALOG_OBJECT_KEY,
+      Body: JSON.stringify(merged, null, 2),
+      ContentType: 'application/json; charset=utf-8',
+    })
+  );
+
+  return merged;
+}
+
 export async function updateR2CatalogTrack(
   id: string,
   patch: Partial<R2StoredTrack>
@@ -982,11 +1442,20 @@ export async function updateR2CatalogTrack(
   const client = getR2Client(cfg);
   const existing = await readR2CatalogManifest(client, cfg.bucketName);
   const idx = existing.findIndex(t => t.id === id);
-  if (idx === -1) return null;
+  if (idx !== -1) {
+    existing[idx] = { ...existing[idx], ...patch };
+    await saveR2CatalogTracks(existing);
+    return existing[idx];
+  }
 
-  existing[idx] = { ...existing[idx], ...patch };
-  await saveR2CatalogTracks(existing);
-  return existing[idx];
+  // Fallback for tracks auto-recovered from R2 tracks/ prefix
+  const allR2 = await getR2CatalogTracks();
+  const targetIdx = allR2.findIndex(t => t.id === id);
+  if (targetIdx === -1) return null;
+
+  allR2[targetIdx] = { ...allR2[targetIdx], ...patch };
+  await saveR2CatalogTracks(allR2);
+  return allR2[targetIdx];
 }
 
 export async function incrementR2CatalogTrackPlays(
@@ -1032,10 +1501,14 @@ export async function deleteR2CatalogTrack(id: string): Promise<boolean> {
     const allR2 = await getR2CatalogTracks();
     target = allR2.find(t => t.id === id);
   }
-  if (target?.audioUrl) {
+  if (target?.r2AudioKey) {
+    await deleteObjectFromR2(target.r2AudioKey);
+  } else if (target?.audioUrl) {
     await deleteObjectFromR2(target.audioUrl);
   }
-  if (target?.coverUrl) {
+  if (target?.r2CoverKey) {
+    await deleteObjectFromR2(target.r2CoverKey);
+  } else if (target?.coverUrl) {
     await deleteObjectFromR2(target.coverUrl);
   }
   return true;

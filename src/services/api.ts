@@ -5,6 +5,7 @@ import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase
 import {
   areTracksDuplicate,
   deduplicateTracksList,
+  healTrackVietnameseDisplay,
   mergeDuplicateTrackPair,
 } from '../utils/trackDedupe';
 
@@ -119,6 +120,8 @@ const ALLOWED_FIRESTORE_TRACK_KEYS: Array<keyof Track> = [
   'aiReason',
   'spotifyTrackId',
   'spotifyUrl',
+  'r2AudioKey',
+  'r2CoverKey',
   'syncedLyrics',
   'plainLyrics',
   'lyricsMode',
@@ -154,6 +157,8 @@ function sanitizeTrackForFirestore(track: Track): Record<string, unknown> {
   if (track.aiReason !== undefined) out.aiReason = String(track.aiReason).slice(0, 500);
   if (track.spotifyTrackId) out.spotifyTrackId = String(track.spotifyTrackId).slice(0, 128);
   if (track.spotifyUrl) out.spotifyUrl = String(track.spotifyUrl).slice(0, 500);
+  if (track.r2AudioKey) out.r2AudioKey = String(track.r2AudioKey).slice(0, 500);
+  if (track.r2CoverKey) out.r2CoverKey = String(track.r2CoverKey).slice(0, 500);
   if (track.syncedLyrics) out.syncedLyrics = String(track.syncedLyrics).slice(0, 50000);
   if (track.plainLyrics) out.plainLyrics = String(track.plainLyrics).slice(0, 50000);
   if (track.lyricsMode === 'synced' || track.lyricsMode === 'plain' || track.lyricsMode === 'none') {
@@ -204,11 +209,11 @@ export const musicApi = {
     const mergeTracks = (incoming: Track[]) => {
       for (const rawTrack of incoming) {
         if (!rawTrack || !rawTrack.id) continue;
-        const t: Track = {
+        const t = healTrackVietnameseDisplay({
           ...rawTrack,
           audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
           coverUrl: normalizePlayableUrl(rawTrack.coverUrl),
-        };
+        });
         const existingIdx = allTracks.findIndex(existing =>
           areTracksDuplicate(existing, t)
         );
@@ -228,11 +233,16 @@ export const musicApi = {
     }
 
     // 2. Load from Firestore (persistent across devices & deployments)
+    const rawFirestoreMap = new Map<string, Track>();
     try {
       const snap = await getDocs(collection(db, 'soundly_tracks'));
       const firestoreTracks: Track[] = [];
       snap.forEach(d => {
-        firestoreTracks.push(d.data() as Track);
+        const data = d.data() as Track;
+        if (data && data.id) {
+          rawFirestoreMap.set(data.id, data);
+          firestoreTracks.push(data);
+        }
       });
       if (firestoreTracks.length > 0) {
         mergeTracks(firestoreTracks);
@@ -262,12 +272,26 @@ export const musicApi = {
       plays: Math.max(Number(t.plays) || 0, Number(localPlays[t.id]) || 0),
     }));
 
-    // Keep localStorage synced with merged cloud tracks
+    // Keep localStorage & Firestore synced when R2/healer upgrades unaccented titles, covers, or durations
     const customOnly = allTracks.filter(
       t => !INITIAL_TRACKS.some(it => it.id === t.id)
     );
     if (customOnly.length > 0) {
       saveLocalCustomTracks(customOnly);
+      for (const t of customOnly) {
+        const prevFs = rawFirestoreMap.get(t.id);
+        if (
+          prevFs &&
+          (prevFs.title !== t.title ||
+            prevFs.artist !== t.artist ||
+            prevFs.coverUrl !== t.coverUrl ||
+            prevFs.duration !== t.duration)
+        ) {
+          void setDoc(doc(db, 'soundly_tracks', t.id), sanitizeTrackForFirestore(t)).catch(
+            () => {}
+          );
+        }
+      }
     }
 
     // Filter by genre
@@ -391,6 +415,8 @@ export const musicApi = {
       lyricsMode?: 'synced' | 'plain' | 'none';
       spotifyTrackId?: string;
       spotifyUrl?: string;
+      r2AudioKey?: string;
+      r2CoverKey?: string;
     }>
   ): Promise<Track[]> {
     const newTracks: Track[] = tracksData.map((t, idx) => {
@@ -430,6 +456,8 @@ export const musicApi = {
         ...(t.lyricsMode ? { lyricsMode: t.lyricsMode } : {}),
         ...(t.spotifyTrackId ? { spotifyTrackId: t.spotifyTrackId } : {}),
         ...(t.spotifyUrl ? { spotifyUrl: t.spotifyUrl } : {}),
+        ...(t.r2AudioKey ? { r2AudioKey: t.r2AudioKey } : {}),
+        ...(t.r2CoverKey ? { r2CoverKey: t.r2CoverKey } : {}),
       };
     });
 
@@ -670,6 +698,42 @@ export const musicApi = {
       updatedTracks,
       tracks: Array.isArray(data.tracks) ? data.tracks : changedTracks,
     };
+  },
+
+  async enrichTrackWithSpotflow(params: {
+    fileName?: string;
+    title?: string;
+    artist?: string;
+    apiKey?: string;
+  }): Promise<{
+    title?: string;
+    artist?: string;
+    album?: string;
+    duration?: number;
+    coverUrl?: string;
+    r2CoverKey?: string;
+    syncedLyrics?: string;
+    plainLyrics?: string;
+    lyrics?: LyricLine[];
+    lyricsMode?: 'synced' | 'plain' | 'none';
+  } | null> {
+    try {
+      const res = await fetch('/api/spotflow/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'enrich',
+          fileName: params.fileName,
+          title: params.title,
+          artist: params.artist,
+          apiKey: params.apiKey,
+        }),
+      });
+      if (!res.ok || !isJsonResponse(res)) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   },
 
   async getR2Status(): Promise<{

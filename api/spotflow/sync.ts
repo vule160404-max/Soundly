@@ -6,18 +6,24 @@ import {
   upsertR2CatalogTracks,
 } from '../_lib/r2.js';
 import {
+  DEFAULT_SPOTFLOW_API_KEY,
   ExistingTrackLookup,
   SpotflowIncomingItem,
+  enrichTrackMetadataFromSpotflow,
   ingestSpotflowTracks,
   resolveSpotflowEndpoint,
 } from '../_lib/spotflow.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
 interface SpotflowSyncBody {
+  action?: 'sync' | 'enrich';
   spotflowUrl?: string;
   apiKey?: string;
   saveToR2?: boolean;
   existingTracks?: ExistingTrackLookup[];
+  fileName?: string;
+  title?: string;
+  artist?: string;
 }
 
 export default async function handler(
@@ -30,10 +36,24 @@ export default async function handler(
   }
 
   try {
-    const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } =
-      await readJsonBody<SpotflowSyncBody>(req);
+    const body = await readJsonBody<SpotflowSyncBody>(req);
 
-    if (!spotflowUrl || !apiKey) {
+    if (body?.action === 'enrich') {
+      const enriched = await enrichTrackMetadataFromSpotflow({
+        fileName: body.fileName,
+        title: body.title,
+        artist: body.artist,
+        apiKey: body.apiKey || DEFAULT_SPOTFLOW_API_KEY,
+        saveCoverToR2: true,
+      });
+      sendJson(res, 200, { ok: true, ...enriched });
+      return;
+    }
+
+    const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = body;
+    const effectiveKey = (apiKey || DEFAULT_SPOTFLOW_API_KEY).trim();
+
+    if (!spotflowUrl || !effectiveKey) {
       sendJson(res, 400, {
         error: 'Vui lòng cung cấp URL của SpotFlow và API Key.',
       });
@@ -41,7 +61,7 @@ export default async function handler(
     }
 
     const endpoint = resolveSpotflowEndpoint(spotflowUrl);
-    const trimmedKey = apiKey.trim();
+    const trimmedKey = effectiveKey;
 
     const response = await fetch(endpoint, {
       method: 'GET',
@@ -113,6 +133,11 @@ export default async function handler(
       saveToR2: saveToR2 !== false,
       existingTracks: mergedExisting,
       sourceLabel: 'SpotFlow MP3',
+      onTrackSaved: async (savedTrack) => {
+        if (r2Configured) {
+          await upsertR2CatalogTracks([savedTrack]);
+        }
+      },
     });
 
     if (result.tracks.length > 0 && r2Configured) {
