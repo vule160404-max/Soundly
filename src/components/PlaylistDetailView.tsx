@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Play, Pause, Shuffle, Music2, Trash2 } from 'lucide-react';
 import { Playlist, Track } from '../types/music';
 import { TrackTable } from './TrackTable';
@@ -25,14 +25,17 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     togglePlay
   } = usePlayer();
 
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
   const playlistTracks = playlist.trackIds
-    .map(id => allTracks.find(t => t.id === id))
+    .map((id) => allTracks.find((t) => t.id === id))
     .filter((t): t is Track => t !== undefined);
 
   const totalSeconds = playlistTracks.reduce((acc, t) => acc + (t.duration || 0), 0);
   const totalMinutes = Math.floor(totalSeconds / 60);
 
-  const isCurrentPlaylistPlaying = playlistTracks.some(t => t.id === currentTrack?.id) && isPlaying;
+  const isCurrentPlaylistPlaying =
+    playlistTracks.some((t) => t.id === currentTrack?.id) && isPlaying;
 
   const handlePlayAll = () => {
     if (playlistTracks.length === 0) return;
@@ -50,11 +53,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     playTrack(playlistTracks[randomIdx], playlistTracks);
   };
 
-  const handleDelete = () => {
-    if (confirm(`Bạn có chắc chắn muốn xóa playlist "${playlist.title}"?`)) {
-      deletePlaylist(playlist.id);
-      onBackToHome();
-    }
+  const handleConfirmDelete = () => {
+    deletePlaylist(playlist.id);
+    onBackToHome();
   };
 
   return (
@@ -70,7 +71,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
         <div className="flex-1 text-center sm:text-left min-w-0">
           <p className="text-xs font-bold uppercase tracking-wider text-[#f47b64] mb-1">
-            {playlist.isCustom ? 'Danh sách phát công khai' : 'Playlist tuyển tập'}
+            {playlist.isCustom ? 'Album cá nhân trong thư viện' : 'Playlist tuyển tập'}
           </p>
           <h2 className="text-2xl sm:text-5xl font-black text-[#f7f5f0] tracking-tight break-words py-1">
             {playlist.title}
@@ -99,7 +100,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             onClick={handlePlayAll}
             disabled={playlistTracks.length === 0}
             className="w-14 h-14 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 disabled:opacity-40 transition-all"
-            title={isCurrentPlaylistPlaying ? 'Tạm dừng' : 'Phát playlist'}
+            title={isCurrentPlaylistPlaying ? 'Tạm dừng' : 'Phát album'}
           >
             {isCurrentPlaylistPlaying ? (
               <Pause className="w-6 h-6 fill-[#070b1a]" />
@@ -119,28 +120,59 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         </div>
 
         {playlist.isCustom && (
-          <button
-            onClick={handleDelete}
-            title="Xóa playlist này"
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span>Xóa danh sách</span>
-          </button>
+          isConfirmingDelete ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmingDelete(false)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0] bg-[#141d3d]"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-500 hover:bg-rose-400 text-white"
+              >
+                Xác nhận xóa
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsConfirmingDelete(true)}
+              title="Xóa album này"
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Xóa album</span>
+            </button>
+          )
         )}
       </div>
 
       {/* Tracks Table */}
       <div className="bg-[#0d142c] rounded-xl p-2">
         {playlistTracks.length > 0 ? (
-          <TrackTable tracks={playlistTracks} onPlayList={(list, idx) => playTrack(list[idx], list)} />
+          <TrackTable
+            tracks={playlistTracks}
+            customPlaylistId={playlist.isCustom ? playlist.id : undefined}
+            onPlayList={(list, idx) => playTrack(list[idx], list)}
+          />
         ) : (
-          <div className="py-16 text-center text-[#a3aed0]">
-            <Music2 className="w-10 h-10 mx-auto mb-3 text-[#f47b64]/45" />
-            <p className="text-sm font-bold text-[#f7f5f0]">Playlist này chưa có bài hát nào</p>
-            <p className="text-xs text-[#8d99be] mt-1 max-w-sm mx-auto">
-              Nhấp vào biểu tượng 3 chấm (...) bên cạnh bài hát bất kỳ để thêm vào playlist này.
+          <div className="py-16 text-center text-[#a3aed0] space-y-3">
+            <Music2 className="w-10 h-10 mx-auto text-[#f47b64]/45" />
+            <p className="text-sm font-bold text-[#f7f5f0]">Album này chưa có bài hát nào</p>
+            <p className="text-xs text-[#8d99be] max-w-sm mx-auto leading-relaxed">
+              Nhấn nút <strong>Thêm / biểu tượng thư mục (+)</strong> trên mỗi bài hát ở Trang chủ hoặc Khám phá để thêm nhạc vào album này.
             </p>
+            <button
+              type="button"
+              onClick={onBackToHome}
+              className="px-4 py-2 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-bold text-xs transition-colors"
+            >
+              Chọn bài hát ngay
+            </button>
           </div>
         )}
       </div>

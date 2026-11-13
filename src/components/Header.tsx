@@ -3,6 +3,7 @@ import { Search, X, Moon, Clock, Menu, LogOut, Sparkles, ShieldCheck } from 'luc
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   searchQuery: string;
@@ -74,8 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Right Actions: Sleep Timer & Login / Profile */}
+        {/* Right Actions: PWA Install, Sleep Timer & Login / Profile */}
         <div className="flex items-center gap-2">
+          <PWAInstallButton />
+
           {/* Admin Quick Link Button (Visible exclusively for admin) */}
           {isAdmin && onOpenAdmin && (
             <button

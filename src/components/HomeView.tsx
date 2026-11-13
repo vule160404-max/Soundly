@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Music2, Sparkles, Compass } from 'lucide-react';
+import { Play, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3 } from 'lucide-react';
 import { Track, Playlist } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { usePlayer } from '../context/PlayerContext';
@@ -17,7 +17,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onSelectPlaylist,
   onExploreGenres,
 }) => {
-  const { playTrack, currentTrack, isPlaying, togglePlay } = usePlayer();
+  const {
+    playTrack,
+    currentTrack,
+    isPlaying,
+    togglePlay,
+    userPlaylists,
+    openAlbumPicker,
+    setIsCreateAlbumModalOpen,
+  } = usePlayer();
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -88,9 +96,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
           {/* Soundly 6-card Quick Picks Grid */}
           <section>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
-              {quickPicks.map(track => {
+              {quickPicks.map((track) => {
                 const isCurrent = currentTrack?.id === track.id;
                 const isThisPlaying = isCurrent && isPlaying;
+                const isInAlbum = userPlaylists.some((pl) => pl.trackIds.includes(track.id));
 
                 return (
                   <div
@@ -121,14 +130,34 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="pr-3">
+                    <div className="flex items-center gap-1.5 pr-2.5 shrink-0">
                       <button
-                        onClick={e => handleQuickPlay(track, e)}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAlbumPicker(track);
+                        }}
+                        title={isInAlbum ? 'Đã lưu trong album • Nhấn để quản lý' : 'Thêm vào album của bạn'}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors ${
+                          isInAlbum
+                            ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45'
+                            : 'bg-[#0d142c]/80 text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:border-[#f47b64]/50'
+                        }`}
+                      >
+                        {isInAlbum ? (
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        ) : (
+                          <FolderPlus className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      <button
+                        onClick={(e) => handleQuickPlay(track, e)}
                         title={isThisPlaying ? 'Tạm dừng' : 'Phát bài hát'}
-                        className={`w-10 h-10 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shrink-0 shadow-xl hover:scale-105 active:scale-95 transition-all ${
+                        className={`w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shrink-0 shadow-xl hover:scale-105 active:scale-95 transition-all ${
                           isThisPlaying
                             ? 'opacity-100 scale-100'
-                            : 'opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0'
+                            : 'opacity-90 sm:opacity-0 sm:translate-y-1 sm:group-hover:opacity-100 sm:group-hover:translate-y-0'
                         }`}
                       >
                         <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
@@ -138,6 +167,72 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 );
               })}
             </div>
+          </section>
+
+          {/* Personal Albums Section */}
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
+                <Disc3 className="w-5 h-5 text-[#f47b64]" />
+                <span>Album thư viện của bạn</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsCreateAlbumModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] hover:border-[#f47b64]/50 text-xs font-bold text-[#f7f5f0] transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5 text-[#f47b64]" />
+                <span>Tạo album mới</span>
+              </button>
+            </div>
+
+            {userPlaylists.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {userPlaylists.map((pl) => (
+                  <div
+                    key={pl.id}
+                    onClick={() => onSelectPlaylist(pl)}
+                    className="group p-3 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl transition-all cursor-pointer flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="relative aspect-square rounded-lg overflow-hidden mb-2.5 shadow-md bg-[#162047]">
+                        <img
+                          src={pl.coverUrl}
+                          alt={pl.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute right-2 bottom-2 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all">
+                          <div className="w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shadow-xl">
+                            <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
+                          </div>
+                        </div>
+                      </div>
+                      <h4 className="text-xs sm:text-sm font-bold text-[#f7f5f0] truncate">{pl.title}</h4>
+                      <p className="text-[11px] text-[#a3aed0] mt-0.5">
+                        {pl.trackIds.length} bài hát
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-[#141d3d]/60 border border-dashed border-[#222f5e] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-[#f7f5f0]">Chưa có album cá nhân nào</p>
+                  <p className="text-[11px] text-[#a3aed0] mt-0.5">
+                    Tạo album riêng rồi bấm nút thêm (+) trên từng bài hát để lưu vào bộ sưu tập của bạn.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateAlbumModalOpen(true)}
+                  className="px-4 py-2 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shrink-0 transition-colors"
+                >
+                  + Tạo album ngay
+                </button>
+              </div>
+            )}
           </section>
 
           {/* All Available Tracks Table */}
@@ -158,7 +253,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </>
       )}
 
-      {/* Soundly Playlists Cards Grid (if any playlists exist) */}
+      {/* Soundly Playlists Cards Grid (if any public playlists exist) */}
       {playlists.length > 0 && (
         <section>
           <div className="flex items-center justify-between mb-4">
@@ -174,7 +269,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-4">
-            {playlists.map(pl => (
+            {playlists.map((pl) => (
               <div
                 key={pl.id}
                 onClick={() => onSelectPlaylist(pl)}

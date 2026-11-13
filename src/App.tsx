@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { PlayerProvider } from './context/PlayerContext';
+import React, { useState, useEffect, useMemo } from 'react';
+import { PlayerProvider, usePlayer } from './context/PlayerContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -22,6 +22,9 @@ import { LoginGate } from './components/LoginGate';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { MobileNowPlayingModal } from './components/MobileNowPlayingModal';
+import { CreateAlbumModal } from './components/CreateAlbumModal';
+import { AddToAlbumModal } from './components/AddToAlbumModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { musicApi } from './services/api';
 import { Track, Playlist, GenreCategory } from './types/music';
 import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from './data/mockTracks';
@@ -29,6 +32,7 @@ import { Loader2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
   const { user, isLoading: isAuthLoading } = useAuth();
+  const { userPlaylists } = usePlayer();
 
   const [currentView, setCurrentView] = useState<string>('home');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -103,7 +107,15 @@ const MainContent: React.FC = () => {
     };
   }, [searchQuery, activeGenre, user]);
 
-  const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) || null;
+  // Merge custom user albums with catalog playlists so created albums open reliably
+  const selectedPlaylist = useMemo(() => {
+    if (!selectedPlaylistId) return null;
+    return (
+      userPlaylists.find((p) => p.id === selectedPlaylistId) ||
+      playlists.find((p) => p.id === selectedPlaylistId) ||
+      null
+    );
+  }, [selectedPlaylistId, userPlaylists, playlists]);
 
   // 1. Loading Authentication State Splash Screen
   if (isAuthLoading) {
@@ -129,6 +141,8 @@ const MainContent: React.FC = () => {
   // 3. Authenticated App Experience
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#070b1a] text-[#f7f5f0] font-sans">
+      <OfflineIndicator />
+
       {/* SIDEBAR (Desktop Persistent & Mobile Drawer) */}
       <Sidebar
         currentView={currentView}
@@ -163,7 +177,7 @@ const MainContent: React.FC = () => {
             <HomeView
               tracks={tracks}
               playlists={playlists}
-              onSelectPlaylist={pl => {
+              onSelectPlaylist={(pl) => {
                 setSelectedPlaylistId(pl.id);
                 setCurrentView('playlist');
               }}
@@ -195,7 +209,7 @@ const MainContent: React.FC = () => {
             <HomeView
               tracks={tracks}
               playlists={playlists}
-              onSelectPlaylist={pl => {
+              onSelectPlaylist={(pl) => {
                 setSelectedPlaylistId(pl.id);
                 setCurrentView('playlist');
               }}
@@ -213,6 +227,13 @@ const MainContent: React.FC = () => {
         onClose={() => setIsSleepTimerOpen(false)}
       />
       <VisualizerModal />
+      <CreateAlbumModal
+        onCreated={(newAlbum) => {
+          setSelectedPlaylistId(newAlbum.id);
+          setCurrentView('playlist');
+        }}
+      />
+      <AddToAlbumModal />
 
       {/* FULLSCREEN NOW PLAYING MODAL ON MOBILE */}
       <MobileNowPlayingModal

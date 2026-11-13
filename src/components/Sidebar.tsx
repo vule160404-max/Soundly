@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Home,
   Compass,
@@ -10,7 +10,8 @@ import {
   Upload,
   Trash2,
   ShieldCheck,
-  X
+  X,
+  Disc3
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
@@ -35,20 +36,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const {
     userPlaylists,
-    createPlaylist,
     likedTrackIds,
-    deletePlaylist
+    deletePlaylist,
+    setIsCreateAlbumModalOpen,
   } = usePlayer();
   const { isAdmin } = useAuth();
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const handleCreatePlaylist = () => {
-    const plName = prompt('Nhập tên danh sách phát mới:', `Danh sách phát #${userPlaylists.length + 1}`);
-    if (plName && plName.trim()) {
-      const newPl = createPlaylist(plName.trim());
-      setSelectedPlaylistId(newPl.id);
-      setCurrentView('playlist');
-      if (onCloseMobile) onCloseMobile();
-    }
+  const handleOpenCreateAlbum = () => {
+    setIsCreateAlbumModalOpen(true);
+    if (onCloseMobile) onCloseMobile();
   };
 
   const navigateTo = (view: string) => {
@@ -143,24 +140,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Box 2: Your Library & Playlists */}
+      {/* Box 2: Your Library & Personal Albums */}
       <div className="flex-1 bg-[#0d142c] border border-[#1e2a54] rounded-xl p-3 flex flex-col min-h-0 overflow-hidden">
         {/* Library Header */}
         <div className="flex items-center justify-between px-2 py-2 mb-2">
-          <div className="flex items-center gap-2.5 text-sm font-bold text-[#a3aed0] hover:text-[#f7f5f0] transition-colors cursor-pointer">
-            <Library className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 text-sm font-bold text-[#f7f5f0]">
+            <Library className="w-5 h-5 text-[#f47b64]" />
             <span>Thư viện của bạn</span>
           </div>
 
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleCreatePlaylist}
-              title="Tạo danh sách phát"
-              className="p-1.5 rounded-full hover:bg-[#162047] text-[#a3aed0] hover:text-[#f7f5f0] transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
+          <button
+            onClick={handleOpenCreateAlbum}
+            title="Tạo album mới trong thư viện"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#162047] hover:bg-[#f47b64] text-[#f7f5f0] hover:text-[#070b1a] text-[11px] font-bold transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Tạo album</span>
+          </button>
         </div>
 
         {/* Liked Songs Special Row */}
@@ -199,64 +195,94 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="border-t border-[#1e2a54] my-2" />
 
-        {/* Playlists List Scroll Area */}
+        {/* Custom Albums List Scroll Area */}
         <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
-          {userPlaylists.map(pl => {
-            const isSelected = currentView === 'playlist' && selectedPlaylistId === pl.id;
-
-            return (
-              <div
-                key={pl.id}
-                onClick={() => openPlaylist(pl)}
-                className={`group flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
-                  isSelected
-                    ? 'bg-[#1c2852] text-[#f7f5f0]'
-                    : 'hover:bg-[#141d3d] text-[#a3aed0] hover:text-[#f7f5f0]'
-                }`}
-              >
-                <div className="flex items-center gap-2.5 truncate flex-1 min-w-0 pr-1">
-                  <div className="w-9 h-9 rounded-md bg-[#162047] overflow-hidden shrink-0 flex items-center justify-center">
-                    {pl.coverUrl ? (
-                      <img
-                        src={pl.coverUrl}
-                        alt={pl.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Music className="w-4 h-4 text-[#a3aed0]" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <p className={`text-xs font-semibold truncate ${isSelected ? 'text-[#f47b64]' : 'text-[#f7f5f0]'}`}>
-                      {pl.title}
-                    </p>
-                    <p className="text-[10px] text-[#8d99be] truncate">
-                      Playlist • {pl.isCustom ? 'Cá nhân' : 'Soundly'}
-                    </p>
-                  </div>
-                </div>
-
-                {pl.isCustom && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`Bạn có chắc muốn xóa playlist "${pl.title}"?`)) {
-                        deletePlaylist(pl.id);
-                        if (selectedPlaylistId === pl.id) {
-                          navigateTo('home');
-                        }
-                      }
-                    }}
-                    title="Xóa danh sách phát"
-                    className="opacity-0 group-hover:opacity-100 p-1 text-[#a3aed0] hover:text-rose-400 rounded transition-opacity"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
+          {userPlaylists.length === 0 ? (
+            <button
+              onClick={handleOpenCreateAlbum}
+              className="w-full mt-1 p-3 rounded-xl bg-[#141d3d]/75 hover:bg-[#1a254d] border border-dashed border-[#2b3b75] text-left space-y-1 transition-colors group"
+            >
+              <div className="flex items-center gap-2 text-xs font-bold text-[#f7f5f0] group-hover:text-[#f47b64]">
+                <Disc3 className="w-4 h-4 text-[#f47b64] shrink-0" />
+                <span>Tạo album của riêng bạn</span>
               </div>
-            );
-          })}
+              <p className="text-[11px] text-[#8d99be] leading-relaxed">
+                Gom những bài hát bạn yêu thích vào album riêng và thêm nhanh từ mọi danh sách nhạc.
+              </p>
+            </button>
+          ) : (
+            userPlaylists.map((pl) => {
+              const isSelected = currentView === 'playlist' && selectedPlaylistId === pl.id;
+              const isConfirming = confirmDeleteId === pl.id;
+
+              return (
+                <div
+                  key={pl.id}
+                  onClick={() => openPlaylist(pl)}
+                  className={`group flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-[#1c2852] text-[#f7f5f0]'
+                      : 'hover:bg-[#141d3d] text-[#a3aed0] hover:text-[#f7f5f0]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 truncate flex-1 min-w-0 pr-1">
+                    <div className="w-9 h-9 rounded-md bg-[#162047] overflow-hidden shrink-0 flex items-center justify-center">
+                      {pl.coverUrl ? (
+                        <img
+                          src={pl.coverUrl}
+                          alt={pl.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Music className="w-4 h-4 text-[#a3aed0]" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className={`text-xs font-semibold truncate ${isSelected ? 'text-[#f47b64]' : 'text-[#f7f5f0]'}`}>
+                        {pl.title}
+                      </p>
+                      <p className="text-[10px] text-[#8d99be] truncate">
+                        Album cá nhân • {pl.trackIds.length} bài hát
+                      </p>
+                    </div>
+                  </div>
+
+                  {pl.isCustom && (
+                    isConfirming ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deletePlaylist(pl.id);
+                          setConfirmDeleteId(null);
+                          if (selectedPlaylistId === pl.id) {
+                            navigateTo('home');
+                          }
+                        }}
+                        onMouseLeave={() => setConfirmDeleteId(null)}
+                        className="px-2 py-1 rounded bg-rose-500 text-white text-[10px] font-bold shrink-0"
+                      >
+                        Xóa?
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteId(pl.id);
+                        }}
+                        title="Xóa album"
+                        className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1.5 text-[#a3aed0] hover:text-rose-400 rounded transition-opacity shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* Admin Quick Upload Shortcut (Visible ONLY for Admin) */}

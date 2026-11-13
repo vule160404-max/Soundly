@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
-import { Track, Playlist, RepeatMode, LyricLine } from '../types/music';
+import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { Track, Playlist, RepeatMode } from '../types/music';
 import { INITIAL_PLAYLISTS } from '../data/mockTracks';
+import { useAuth } from './AuthContext';
+import { db, OperationType, handleFirestoreError } from '../lib/firebase';
+
+export const DEFAULT_CUSTOM_ALBUM_COVER =
+  'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
 
 interface PlayerContextType {
   // Current playback
@@ -34,15 +40,23 @@ interface PlayerContextType {
   removeFromQueue: (index: number) => void;
   clearQueue: () => void;
 
-  // Favorites & Playlists
+  // Favorites & Custom Albums / Playlists
   likedTrackIds: string[];
   toggleLike: (trackId: string) => void;
   isLiked: (trackId: string) => boolean;
   userPlaylists: Playlist[];
-  createPlaylist: (title: string, description?: string) => Playlist;
-  addTrackToPlaylist: (playlistId: string, trackId: string) => void;
+  createPlaylist: (title: string, description?: string, initialTrack?: Track) => Playlist;
+  addTrackToPlaylist: (playlistId: string, trackId: string, trackCoverUrl?: string) => void;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => void;
+  toggleTrackInPlaylist: (playlistId: string, track: Track) => boolean;
   deletePlaylist: (playlistId: string) => void;
+
+  // Album modals state
+  albumPickerTrack: Track | null;
+  openAlbumPicker: (track: Track) => void;
+  closeAlbumPicker: () => void;
+  isCreateAlbumModalOpen: boolean;
+  setIsCreateAlbumModalOpen: (open: boolean) => void;
 
   // History
   recentHistory: Track[];
@@ -67,7 +81,39 @@ interface PlayerContextType {
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
+function getPlaylistsStorageKey(uid?: string | null): string {
+  return uid ? `nordic_playlists_${uid}` : 'nordic_playlists';
+}
+
+function sanitizePlaylistId(rawId: string): string {
+  const cleaned = String(rawId || `album-${Date.now()}`)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 128);
+  return cleaned || `album-${Date.now()}`;
+}
+
+function loadLocalPlaylists(uid?: string | null): Playlist[] {
+  try {
+    const specific = uid ? localStorage.getItem(getPlaylistsStorageKey(uid)) : null;
+    const legacy = localStorage.getItem('nordic_playlists');
+    const saved = specific || legacy;
+    if (!saved) return INITIAL_PLAYLISTS;
+    const parsed = JSON.parse(saved) as Playlist[];
+    const oldPlaylistIds = new Set([
+      'playlist-nordic-chill',
+      'playlist-morning-fika',
+      'playlist-focus-study',
+    ]);
+    return Array.isArray(parsed)
+      ? parsed.filter((pl) => pl && pl.id && !oldPlaylistIds.has(pl.id))
+      : INITIAL_PLAYLISTS;
+  } catch {
+    return INITIAL_PLAYLISTS;
+  }
+}
+
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamFallbackTriedRef = useRef<boolean>(false);
   const handleTrackEndRef = useRef<() => void>(() => {});
@@ -107,24 +153,20 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (!saved) return [];
       const parsed = JSON.parse(saved) as string[];
       const oldIds = new Set(['track-1', 'track-2', 'track-3', 'track-4', 'track-5', 'track-6', 'track-7', 'track-8']);
-      return parsed.filter(id => !oldIds.has(id));
+      return parsed.filter((id) => !oldIds.has(id));
     } catch {
       return [];
     }
   });
 
-  // Playlists
-  const [userPlaylists, setUserPlaylists] = useState<Playlist[]>(() => {
-    try {
-      const saved = localStorage.getItem('nordic_playlists');
-      if (!saved) return INITIAL_PLAYLISTS;
-      const parsed = JSON.parse(saved) as Playlist[];
-      const oldPlaylistIds = new Set(['playlist-nordic-chill', 'playlist-morning-fika', 'playlist-focus-study']);
-      return parsed.filter(pl => !oldPlaylistIds.has(pl.id));
-    } catch {
-      return INITIAL_PLAYLISTS;
-    }
-  });
+  // Custom Albums / Playlists
+  const [userPlaylists, setUserPlaylists] = useState<Playlist[]>(() =>
+    loadLocalPlaylists(user?.uid)
+  );
+
+  // Album Modals
+  const [albumPickerTrack, setAlbumPickerTrack] = useState<Track | null>(null);
+  const [isCreateAlbumModalOpen, setIsCreateAlbumModalOpen] = useState<boolean>(false);
 
   // Sleep Timer
   const [sleepTimerEndTime, setSleepTimerEndTime] = useState<number | null>(null);
@@ -135,6 +177,141 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isVisualizerOpen, setIsVisualizerOpen] = useState(false);
   const [isAddTrackModalOpen, setIsAddTrackModalOpen] = useState(false);
+
+  const persistPlaylistToFirestore = useCallback(
+    async (uid: string, playlist: Playlist) => {
+      const safeId = sanitizePlaylistId(playlist.id);
+      const docPath = `users/${uid}/playlists/${safeId}`;
+      try {
+        await setDoc(
+          doc(db, 'users', uid, 'playlists', safeId),
+          {
+            id: safeId,
+            userId: uid,
+            title: String(playlist.title || 'Album của tôi').slice(0, 200),
+            description: String(playlist.description || '').slice(0, 500),
+            coverUrl: String(playlist.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER).slice(0, 2000),
+            trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds.slice(0, 1000) : [],
+            isCustom: true,
+            createdAt: playlist.createdAt || new Date().toLocaleDateString('vi-VN'),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+          try {
+            handleFirestoreError(err, OperationType.WRITE, docPath);
+          } catch (formattedErr) {
+            console.warn(formattedErr);
+          }
+        } else {
+          console.warn('Could not sync album to Firestore:', err);
+        }
+      }
+    },
+    []
+  );
+
+  const removePlaylistFromFirestore = useCallback(async (uid: string, playlistId: string) => {
+    const safeId = sanitizePlaylistId(playlistId);
+    const docPath = `users/${uid}/playlists/${safeId}`;
+    try {
+      await deleteDoc(doc(db, 'users', uid, 'playlists', safeId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+        try {
+          handleFirestoreError(err, OperationType.DELETE, docPath);
+        } catch (formattedErr) {
+          console.warn(formattedErr);
+        }
+      } else {
+        console.warn('Could not delete album from Firestore:', err);
+      }
+    }
+  }, []);
+
+  // Load & sync personal albums with Firestore when user signs in
+  useEffect(() => {
+    if (!user?.uid) {
+      setUserPlaylists(loadLocalPlaylists(null));
+      return;
+    }
+
+    const uid = user.uid;
+    let isMounted = true;
+    const localAlbums = loadLocalPlaylists(uid);
+    setUserPlaylists(localAlbums);
+
+    async function syncAlbumsFromFirestore() {
+      const colPath = `users/${uid}/playlists`;
+      try {
+        const snap = await getDocs(collection(db, 'users', uid, 'playlists'));
+        if (!isMounted) return;
+
+        const remoteMap = new Map<string, Playlist>();
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as Partial<Playlist>;
+          const id = sanitizePlaylistId(data.id || docSnap.id);
+          remoteMap.set(id, {
+            id,
+            title: data.title || 'Album của tôi',
+            description: data.description || 'Tuyển tập giai điệu của tôi',
+            coverUrl: data.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER,
+            trackIds: Array.isArray(data.trackIds) ? Array.from(new Set(data.trackIds)) : [],
+            isCustom: true,
+            createdAt: data.createdAt || new Date().toLocaleDateString('vi-VN'),
+          });
+        });
+
+        // Merge local-only custom albums up to Firestore
+        const mergedMap = new Map<string, Playlist>(remoteMap);
+        const localOnlyToPush: Playlist[] = [];
+
+        for (const localPl of localAlbums) {
+          const safeId = sanitizePlaylistId(localPl.id);
+          if (!mergedMap.has(safeId)) {
+            const normalized: Playlist = { ...localPl, id: safeId, isCustom: true };
+            mergedMap.set(safeId, normalized);
+            localOnlyToPush.push(normalized);
+          }
+        }
+
+        const merged = Array.from(mergedMap.values());
+        if (isMounted) {
+          setUserPlaylists(merged);
+          try {
+            localStorage.setItem(getPlaylistsStorageKey(uid), JSON.stringify(merged));
+            localStorage.setItem('nordic_playlists', JSON.stringify(merged));
+          } catch {
+            // ignore
+          }
+        }
+
+        for (const pl of localOnlyToPush) {
+          await persistPlaylistToFirestore(uid, pl);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+          try {
+            handleFirestoreError(err, OperationType.LIST, colPath);
+          } catch (formattedErr) {
+            console.warn(formattedErr);
+          }
+        } else {
+          console.warn('Could not load user albums from Firestore:', err);
+        }
+      }
+    }
+
+    syncAlbumsFromFirestore();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.uid, persistPlaylistToFirestore]);
 
   function extractR2TrackKeyFromUrl(rawUrl: string): string | null {
     if (!rawUrl) return null;
@@ -240,10 +417,17 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStorage.setItem('nordic_liked_tracks', JSON.stringify(likedTrackIds));
   }, [likedTrackIds]);
 
-  // Save playlists
+  // Save playlists to localStorage
   useEffect(() => {
-    localStorage.setItem('nordic_playlists', JSON.stringify(userPlaylists));
-  }, [userPlaylists]);
+    try {
+      localStorage.setItem('nordic_playlists', JSON.stringify(userPlaylists));
+      if (user?.uid) {
+        localStorage.setItem(getPlaylistsStorageKey(user.uid), JSON.stringify(userPlaylists));
+      }
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [userPlaylists, user?.uid]);
 
   // Save history
   useEffect(() => {
@@ -263,7 +447,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSleepTimerRemaining(diff);
 
       if (diff <= 0) {
-        // Stop audio gently
         if (audioRef.current) {
           audioRef.current.pause();
           setIsPlaying(false);
@@ -296,16 +479,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setDuration(track.duration || 0);
     streamFallbackTriedRef.current = false;
 
-    // If new queue provided, update queue
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
-      const idx = newQueue.findIndex(t => t.id === track.id);
+      const idx = newQueue.findIndex((t) => t.id === track.id);
       setQueueIndex(idx !== -1 ? idx : 0);
     } else {
-      // If queue is empty, set this track as queue
-      setQueue(prev => {
+      setQueue((prev) => {
         if (prev.length === 0) return [track];
-        const idx = prev.findIndex(t => t.id === track.id);
+        const idx = prev.findIndex((t) => t.id === track.id);
         if (idx !== -1) {
           setQueueIndex(idx);
           return prev;
@@ -321,7 +502,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    // Never attempt direct playback against private S3 R2 API domain; route via stream proxy
     if (playableUrl.includes('.r2.cloudflarestorage.com/')) {
       const r2Key = extractR2TrackKeyFromUrl(playableUrl);
       if (r2Key) {
@@ -339,14 +519,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       .then(() => {
         setIsPlaying(true);
       })
-      .catch(err => {
+      .catch((err) => {
         console.warn('Audio play request interrupted:', err);
         setIsPlaying(false);
       });
 
-    // Add to recent history (deduplicated at top)
-    setRecentHistory(prev => {
-      const filtered = prev.filter(t => t.id !== track.id);
+    setRecentHistory((prev) => {
+      const filtered = prev.filter((t) => t.id !== track.id);
       return [track, ...filtered];
     });
   }, []);
@@ -364,7 +543,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setIsPlaying(true);
           setAudioError(null);
         })
-        .catch(err => {
+        .catch((err) => {
           console.warn('Play error:', err);
           setAudioError('Trình duyệt không thể phát âm thanh. Nhấn lại hoặc kiểm tra tệp nhạc.');
         });
@@ -385,15 +564,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const toggleMute = () => {
-    setIsMuted(prev => !prev);
+    setIsMuted((prev) => !prev);
   };
 
   const toggleShuffle = () => {
-    setIsShuffle(prev => !prev);
+    setIsShuffle((prev) => !prev);
   };
 
   const cycleRepeatMode = () => {
-    setRepeatMode(prev => {
+    setRepeatMode((prev) => {
       if (prev === 'off') return 'all';
       if (prev === 'all') return 'one';
       return 'off';
@@ -408,13 +587,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (queue.length === 0) return;
 
     if (isShuffle) {
-      // Pick random track that is not current
-      const availableIndices = queue
-        .map((_, i) => i)
-        .filter(i => i !== queueIndex);
-      const nextIdx = availableIndices.length > 0
-        ? availableIndices[Math.floor(Math.random() * availableIndices.length)]
-        : 0;
+      const availableIndices = queue.map((_, i) => i).filter((i) => i !== queueIndex);
+      const nextIdx =
+        availableIndices.length > 0
+          ? availableIndices[Math.floor(Math.random() * availableIndices.length)]
+          : 0;
       setQueueIndex(nextIdx);
       playTrack(queue[nextIdx], queue);
       return;
@@ -425,7 +602,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (repeatMode === 'all') {
         nextIndex = 0;
       } else {
-        // Reached end of queue without repeat all
         setIsPlaying(false);
         return;
       }
@@ -437,7 +613,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const playPrevious = useCallback(() => {
     if (!audioRef.current || queue.length === 0) return;
 
-    // If played more than 3 seconds, restart current track
     if (audioRef.current.currentTime > 3) {
       seek(0);
       return;
@@ -465,13 +640,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [handleTrackEnd]);
 
   const addToQueue = (track: Track) => {
-    setQueue(prev => [...prev, track]);
+    setQueue((prev) => [...prev, track]);
   };
 
   const removeFromQueue = (index: number) => {
-    setQueue(prev => prev.filter((_, idx) => idx !== index));
+    setQueue((prev) => prev.filter((_, idx) => idx !== index));
     if (index < queueIndex) {
-      setQueueIndex(prev => Math.max(0, prev - 1));
+      setQueueIndex((prev) => Math.max(0, prev - 1));
     }
   };
 
@@ -487,55 +662,96 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Liked tracks
   const toggleLike = (trackId: string) => {
-    setLikedTrackIds(prev =>
-      prev.includes(trackId)
-        ? prev.filter(id => id !== trackId)
-        : [...prev, trackId]
+    setLikedTrackIds((prev) =>
+      prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
     );
   };
 
   const isLiked = (trackId: string) => likedTrackIds.includes(trackId);
 
-  // Custom playlists
-  const createPlaylist = (title: string, description?: string): Playlist => {
+  // Custom albums / playlists
+  const createPlaylist = (
+    title: string,
+    description?: string,
+    initialTrack?: Track
+  ): Playlist => {
     const newPl: Playlist = {
-      id: `playlist-${Date.now()}`,
-      title: title.trim(),
-      description: description?.trim() || 'Tuyển tập giai điệu của tôi',
-      coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-      trackIds: [],
+      id: sanitizePlaylistId(`album-${Date.now()}`),
+      title: title.trim() || 'Album của tôi',
+      description: description?.trim() || 'Album cá nhân trong thư viện Soundly',
+      coverUrl: initialTrack?.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER,
+      trackIds: initialTrack ? [initialTrack.id] : [],
       isCustom: true,
-      createdAt: new Date().toLocaleDateString('vi-VN')
+      createdAt: new Date().toLocaleDateString('vi-VN'),
     };
-    setUserPlaylists(prev => [newPl, ...prev]);
+    setUserPlaylists((prev) => [newPl, ...prev]);
+    if (user?.uid) {
+      void persistPlaylistToFirestore(user.uid, newPl);
+    }
     return newPl;
   };
 
-  const addTrackToPlaylist = (playlistId: string, trackId: string) => {
-    setUserPlaylists(prev =>
-      prev.map(p => {
-        if (p.id === playlistId) {
-          if (p.trackIds.includes(trackId)) return p;
-          return { ...p, trackIds: [...p.trackIds, trackId] };
+  const addTrackToPlaylist = (playlistId: string, trackId: string, trackCoverUrl?: string) => {
+    setUserPlaylists((prev) =>
+      prev.map((p) => {
+        if (p.id !== playlistId) return p;
+        if (p.trackIds.includes(trackId)) return p;
+        const shouldUseTrackCover =
+          trackCoverUrl && (!p.coverUrl || p.coverUrl === DEFAULT_CUSTOM_ALBUM_COVER);
+        const updated: Playlist = {
+          ...p,
+          coverUrl: shouldUseTrackCover ? trackCoverUrl : p.coverUrl,
+          trackIds: [...p.trackIds, trackId],
+        };
+        if (user?.uid) {
+          void persistPlaylistToFirestore(user.uid, updated);
         }
-        return p;
+        return updated;
       })
     );
   };
 
   const removeTrackFromPlaylist = (playlistId: string, trackId: string) => {
-    setUserPlaylists(prev =>
-      prev.map(p => {
-        if (p.id === playlistId) {
-          return { ...p, trackIds: p.trackIds.filter(id => id !== trackId) };
+    setUserPlaylists((prev) =>
+      prev.map((p) => {
+        if (p.id !== playlistId) return p;
+        const updated: Playlist = {
+          ...p,
+          trackIds: p.trackIds.filter((id) => id !== trackId),
+        };
+        if (user?.uid) {
+          void persistPlaylistToFirestore(user.uid, updated);
         }
-        return p;
+        return updated;
       })
     );
   };
 
+  const toggleTrackInPlaylist = (playlistId: string, track: Track): boolean => {
+    const target = userPlaylists.find((p) => p.id === playlistId);
+    const alreadyInAlbum = target?.trackIds.includes(track.id) ?? false;
+    if (alreadyInAlbum) {
+      removeTrackFromPlaylist(playlistId, track.id);
+      return false;
+    } else {
+      addTrackToPlaylist(playlistId, track.id, track.coverUrl);
+      return true;
+    }
+  };
+
   const deletePlaylist = (playlistId: string) => {
-    setUserPlaylists(prev => prev.filter(p => p.id !== playlistId));
+    setUserPlaylists((prev) => prev.filter((p) => p.id !== playlistId));
+    if (user?.uid) {
+      void removePlaylistFromFirestore(user.uid, playlistId);
+    }
+  };
+
+  const openAlbumPicker = (track: Track) => {
+    setAlbumPickerTrack(track);
+  };
+
+  const closeAlbumPicker = () => {
+    setAlbumPickerTrack(null);
   };
 
   return (
@@ -573,7 +789,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         createPlaylist,
         addTrackToPlaylist,
         removeTrackFromPlaylist,
+        toggleTrackInPlaylist,
         deletePlaylist,
+        albumPickerTrack,
+        openAlbumPicker,
+        closeAlbumPicker,
+        isCreateAlbumModalOpen,
+        setIsCreateAlbumModalOpen,
         recentHistory,
         sleepTimerRemaining,
         setSleepTimer,

@@ -15,7 +15,9 @@ import {
   ListMusic,
   Activity,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  FolderPlus,
+  Check
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 
@@ -51,7 +53,9 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
     isQueueOpen,
     setIsQueueOpen,
     isVisualizerOpen,
-    setIsVisualizerOpen
+    setIsVisualizerOpen,
+    openAlbumPicker,
+    userPlaylists
   } = usePlayer();
 
   const [, setIsHoveringSeek] = useState(false);
@@ -195,6 +199,23 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
                 className="p-1.5 rounded-lg text-[#a3aed0] hover:text-[#f7f5f0] transition-colors shrink-0"
               >
                 <Heart className={`w-4 h-4 ${liked ? 'fill-[#f47b64] text-[#f47b64]' : ''}`} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openAlbumPicker(currentTrack)}
+                title="Thêm vào album trong thư viện"
+                className={`p-1.5 rounded-lg transition-colors shrink-0 ${
+                  userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id))
+                    ? 'text-[#f47b64] hover:text-[#ff8d76]'
+                    : 'text-[#a3aed0] hover:text-[#f7f5f0]'
+                }`}
+              >
+                {userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id)) ? (
+                  <Check className="w-4 h-4 stroke-[2.5]" />
+                ) : (
+                  <FolderPlus className="w-4 h-4" />
+                )}
               </button>
             </>
           ) : (

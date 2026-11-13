@@ -15,7 +15,9 @@ import {
   Activity,
   Volume2,
   VolumeX,
-  Share2
+  Share2,
+  FolderPlus,
+  Check
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 
@@ -51,7 +53,9 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
     isLiked,
     setIsLyricsOpen,
     setIsQueueOpen,
-    setIsVisualizerOpen
+    setIsVisualizerOpen,
+    openAlbumPicker,
+    userPlaylists
   } = usePlayer();
 
   if (!isOpen || !currentTrack) return null;
@@ -126,13 +130,32 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={() => toggleLike(currentTrack.id)}
-            className="min-h-[48px] min-w-[48px] flex items-center justify-center active:scale-125 transition-transform shrink-0"
-            title={liked ? 'Xóa khỏi yêu thích' : 'Lưu vào yêu thích'}
-          >
-            <Heart className={`w-7 h-7 ${liked ? 'fill-[#f47b64] text-[#f47b64]' : 'text-[#a3aed0]'}`} />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => openAlbumPicker(currentTrack)}
+              className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full active:scale-110 transition-transform ${
+                userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id))
+                  ? 'text-[#f47b64]'
+                  : 'text-[#a3aed0]'
+              }`}
+              title="Thêm vào album trong thư viện"
+            >
+              {userPlaylists.some((pl) => pl.trackIds.includes(currentTrack.id)) ? (
+                <Check className="w-6 h-6 stroke-[2.5]" />
+              ) : (
+                <FolderPlus className="w-6 h-6" />
+              )}
+            </button>
+
+            <button
+              onClick={() => toggleLike(currentTrack.id)}
+              className="min-h-[48px] min-w-[48px] flex items-center justify-center active:scale-125 transition-transform shrink-0"
+              title={liked ? 'Xóa khỏi yêu thích' : 'Lưu vào yêu thích'}
+            >
+              <Heart className={`w-7 h-7 ${liked ? 'fill-[#f47b64] text-[#f47b64]' : 'text-[#a3aed0]'}`} />
+            </button>
+          </div>
         </div>
 
         {/* Precision Progress Scrubber */}
