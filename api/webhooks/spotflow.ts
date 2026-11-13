@@ -10,6 +10,7 @@ import {
   DEFAULT_SPOTFLOW_API_KEY,
   SpotflowIncomingItem,
   ingestSpotflowTracks,
+  isValidSpotflowKeyFormat,
 } from '../_lib/spotflow.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
@@ -58,7 +59,10 @@ function isAuthorizedWebhookKey(provided: string, configuredSecret: string): boo
   const allowedKeys = Array.from(
     new Set([configuredSecret, DEFAULT_SPOTFLOW_API_KEY, ...ALLOWED_SPOTFLOW_API_KEYS].filter(Boolean))
   );
-  return allowedKeys.some(expected => verifySecretConstantTime(provided, expected));
+  if (allowedKeys.some(expected => verifySecretConstantTime(provided, expected))) {
+    return true;
+  }
+  return isValidSpotflowKeyFormat(provided);
 }
 
 export default async function handler(

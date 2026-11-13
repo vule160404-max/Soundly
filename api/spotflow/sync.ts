@@ -8,10 +8,9 @@ import {
 import {
   DEFAULT_SPOTFLOW_API_KEY,
   ExistingTrackLookup,
-  SpotflowIncomingItem,
   enrichTrackMetadataFromSpotflow,
+  fetchSpotflowTracksFromServer,
   ingestSpotflowTracks,
-  resolveSpotflowEndpoint,
 } from '../_lib/spotflow.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
@@ -51,64 +50,12 @@ export default async function handler(
     }
 
     const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = body;
-    const effectiveKey = (apiKey || DEFAULT_SPOTFLOW_API_KEY).trim();
 
-    if (!spotflowUrl || !effectiveKey) {
-      sendJson(res, 400, {
-        error: 'Vui lòng cung cấp URL của SpotFlow và API Key.',
+    const { endpoint, effectiveApiKey, items } =
+      await fetchSpotflowTracksFromServer({
+        spotflowUrl,
+        apiKey,
       });
-      return;
-    }
-
-    const endpoint = resolveSpotflowEndpoint(spotflowUrl);
-    const trimmedKey = effectiveKey;
-
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        'X-API-Key': trimmedKey,
-        Authorization: `Bearer ${trimmedKey}`,
-        Accept: 'application/json',
-      },
-    });
-
-    const rawBody = await response.text();
-
-    if (!response.ok) {
-      sendJson(res, response.status, {
-        error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status} tại ${endpoint}). Kiểm tra lại URL hoặc API Key.`,
-      });
-      return;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawBody);
-    } catch {
-      sendJson(res, 502, {
-        error: `SpotFlow trả về HTML/văn bản thay vì JSON tại ${endpoint}. Hãy kiểm tra đúng REST API Endpoint hoặc đợi server SpotFlow (Render) khởi động xong rồi thử lại.`,
-      });
-      return;
-    }
-
-    const items: SpotflowIncomingItem[] | null = Array.isArray(parsed)
-      ? parsed
-      : parsed &&
-          typeof parsed === 'object' &&
-          Array.isArray((parsed as { tracks?: unknown }).tracks)
-        ? (parsed as { tracks: SpotflowIncomingItem[] }).tracks
-        : parsed &&
-            typeof parsed === 'object' &&
-            Array.isArray((parsed as { data?: unknown }).data)
-          ? (parsed as { data: SpotflowIncomingItem[] }).data
-          : null;
-
-    if (!items) {
-      sendJson(res, 400, {
-        error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).',
-      });
-      return;
-    }
 
     const r2Config = loadR2Config();
     const r2Configured = isR2Configured(r2Config);
@@ -129,15 +76,10 @@ export default async function handler(
     const result = await ingestSpotflowTracks({
       items,
       baseEndpoint: endpoint,
-      apiKey: trimmedKey,
+      apiKey: effectiveApiKey,
       saveToR2: saveToR2 !== false,
       existingTracks: mergedExisting,
       sourceLabel: 'SpotFlow MP3',
-      onTrackSaved: async (savedTrack) => {
-        if (r2Configured) {
-          await upsertR2CatalogTracks([savedTrack]);
-        }
-      },
     });
 
     if (result.tracks.length > 0 && r2Configured) {

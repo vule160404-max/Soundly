@@ -57,7 +57,9 @@ function cleanEnvValue(value?: string): string {
 export function loadR2Config(): R2Config {
   return {
     accountId: cleanEnvValue(
-      process.env.CLOUDFLARE_R2_ACCOUNT_ID || process.env.R2_ACCOUNT_ID
+      process.env.CLOUDFLARE_R2_ACCOUNT_ID ||
+        process.env.R2_ACCOUNT_ID ||
+        process.env.CLOUDFLARE_ACCOUNT_ID
     ),
     accessKeyId: cleanEnvValue(
       process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID
@@ -67,12 +69,18 @@ export function loadR2Config(): R2Config {
         process.env.R2_SECRET_ACCESS_KEY
     ),
     bucketName: cleanEnvValue(
-      process.env.CLOUDFLARE_R2_BUCKET_NAME || process.env.R2_BUCKET_NAME
+      process.env.CLOUDFLARE_R2_BUCKET_NAME ||
+        process.env.R2_BUCKET_NAME ||
+        process.env.R2_BUCKET ||
+        process.env.CLOUDFLARE_R2_BUCKET
     ),
     publicDomain: cleanEnvValue(
       process.env.CLOUDFLARE_R2_PUBLIC_DOMAIN ||
+        process.env.R2_PUBLIC_BASE_URL ||
         process.env.R2_PUBLIC_DOMAIN ||
-        process.env.R2_PUBLIC_URL
+        process.env.R2_PUBLIC_URL ||
+        process.env.CLOUDFLARE_R2_PUBLIC_URL ||
+        'https://pub-abe76365ee0b4bb69d5f0f51a5abc76d.r2.dev'
     ),
   };
 }
@@ -670,10 +678,67 @@ const IMAGE_EXT_REGEX = /\.(jpe?g|png|webp|avif)$/i;
 function extractFileStemFromKey(key: string): string {
   const fileName = key.split('/').pop() || key;
   const withoutExt = fileName.replace(/\.[^/.]+$/, '');
-  const withoutTimestamp = withoutExt
+  const withoutTimestampOrShortId = withoutExt
     .replace(/^\d{10,}-/, '')
-    .replace(/-\d{10,}$/, '');
-  return withoutTimestamp.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    .replace(/-\d{10,}$/, '')
+    .replace(/-[0-9a-f]{8}$/i, '');
+  return withoutTimestampOrShortId.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function slugifyMusicToolKey(input: string): string {
+  return (
+    (input || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 72) || 'track'
+  );
+}
+
+let cachedSpotflowHistoryMap: Map<string, { title: string; artist: string; album?: string }> | null =
+  null;
+let cachedSpotflowHistoryAt = 0;
+
+async function getSpotflowHistorySlugMap(): Promise<
+  Map<string, { title: string; artist: string; album?: string }>
+> {
+  if (cachedSpotflowHistoryMap && Date.now() - cachedSpotflowHistoryAt < 60_000) {
+    return cachedSpotflowHistoryMap;
+  }
+  const map = new Map<string, { title: string; artist: string; album?: string }>();
+  try {
+    const res = await fetch('https://musictool-ytsg.onrender.com/api/history', {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        items?: Array<{ title?: string; artist?: string; album?: string }>;
+      };
+      for (const item of data.items || []) {
+        const title = (item.title || '').trim();
+        const artist = (item.artist || '').trim();
+        if (!title) continue;
+        const slugFull = slugifyMusicToolKey(`${artist ? `${artist}-` : ''}${title}`);
+        const slugTitleOnly = slugifyMusicToolKey(title);
+        const entry = {
+          title,
+          artist: artist || 'Nghệ sĩ chưa rõ',
+          album: item.album && item.album !== 'Local Upload' ? item.album : undefined,
+        };
+        if (slugFull && !map.has(slugFull)) map.set(slugFull, entry);
+        if (slugTitleOnly && !map.has(slugTitleOnly)) map.set(slugTitleOnly, entry);
+      }
+      cachedSpotflowHistoryMap = map;
+      cachedSpotflowHistoryAt = Date.now();
+    }
+  } catch {
+    // non-fatal if Render is offline
+  }
+  return map;
 }
 
 function normalizeStemKey(raw: string, stripD: boolean = false): string {
@@ -1241,6 +1306,26 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       manifestTracks.map(t => t.audioUrl).filter(Boolean)
     );
 
+    const historySlugMap = await getSpotflowHistorySlugMap();
+    const lookupHistoryByKeyOrText = (
+      audioKey: string,
+      title: string,
+      artist: string
+    ): { title: string; artist: string; album?: string } | undefined => {
+      const rawStem = extractFileStemFromKey(audioKey);
+      const candidates = [
+        slugifyMusicToolKey(rawStem),
+        slugifyMusicToolKey(`${artist ? `${artist}-` : ''}${title}`),
+        slugifyMusicToolKey(title),
+      ];
+      for (const c of candidates) {
+        if (c && historySlugMap.has(c)) {
+          return historySlugMap.get(c);
+        }
+      }
+      return undefined;
+    };
+
     const recoveredTracks: R2StoredTrack[] = [];
     for (const item of listedTrackObjects.sort(
       (a, b) =>
@@ -1249,8 +1334,12 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       const publicUrl = buildR2PublicUrl(cfg, item.key);
       if (knownKeys.has(item.key) || knownUrls.has(publicUrl)) continue;
       const meta = parseTrackMetaFromKey(item.key);
+      const histMatch = lookupHistoryByKeyOrText(item.key, meta.title, meta.artist);
+      const finalTitle = histMatch?.title || meta.title;
+      const finalArtist = histMatch?.artist || meta.artist;
+      const finalAlbum = histMatch?.album || 'Kho nhạc Cloudflare R2';
       const matchedCover =
-        findMatchingCoverInR2(item.key, meta.title, meta.artist) ||
+        findMatchingCoverInR2(item.key, finalTitle, finalArtist) ||
         DEFAULT_COVER_URL;
       const estimatedDuration = estimateMp3DurationFromSize(item.size);
       const safeId = `r2-${item.key
@@ -1259,9 +1348,9 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
         .slice(0, 96)}`;
       recoveredTracks.push({
         id: safeId,
-        title: meta.title,
-        artist: meta.artist,
-        album: 'Kho nhạc Cloudflare R2',
+        title: finalTitle,
+        artist: finalArtist,
+        album: finalAlbum,
         audioUrl: publicUrl,
         coverUrl: matchedCover,
         duration: estimatedDuration,
@@ -1272,7 +1361,7 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
         mood: 'Thư giãn',
         aiClassified: Boolean(meta.genreHint),
         aiReason: 'Khôi phục tự động từ Cloudflare R2',
-        lyrics: [{ time: 5, text: `Đang phát: ${meta.title}` }],
+        lyrics: [{ time: 5, text: `Đang phát: ${finalTitle}` }],
         plays: 0,
         r2AudioKey: item.key,
       });
@@ -1281,24 +1370,34 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
     let manifestUpdated = false;
     const healedManifest = manifestTracks.map(t => {
       const next = { ...t };
-      const audioKey = extractR2Key(next.audioUrl);
+      const audioKey = next.r2AudioKey || extractR2Key(next.audioUrl);
       if (next.audioUrl && next.audioUrl.includes('.r2.cloudflarestorage.com/')) {
         if (audioKey) next.audioUrl = buildR2PublicUrl(cfg, audioKey);
       }
       if (next.coverUrl && next.coverUrl.includes('.r2.cloudflarestorage.com/')) {
-        const k = extractR2Key(next.coverUrl);
+        const k = next.r2CoverKey || extractR2Key(next.coverUrl);
         if (k) next.coverUrl = buildR2PublicUrl(cfg, k);
       }
-      // Heal raw slug titles/artists in existing manifest
+      // Heal raw slug titles/artists in existing manifest using MusicTool history first, then Vietnamese dictionary
       if (isLikelyRawSlugText(next.title) || isLikelyRawSlugText(next.artist)) {
-        const restored = restoreVietnameseMetadataFromSlug(next.title, next.artist);
-        if (restored.title !== next.title || restored.artist !== next.artist) {
-          next.title = restored.title;
-          next.artist = restored.artist;
-          if (restored.genreHint && next.genre === 'Pop') {
-            next.genre = restored.genreHint;
+        const histMatch = lookupHistoryByKeyOrText(audioKey || next.id, next.title, next.artist);
+        if (histMatch) {
+          next.title = histMatch.title;
+          next.artist = histMatch.artist;
+          if (histMatch.album && next.album === 'Kho nhạc Cloudflare R2') {
+            next.album = histMatch.album;
           }
           manifestUpdated = true;
+        } else {
+          const restored = restoreVietnameseMetadataFromSlug(next.title, next.artist);
+          if (restored.title !== next.title || restored.artist !== next.artist) {
+            next.title = restored.title;
+            next.artist = restored.artist;
+            if (restored.genreHint && next.genre === 'Pop') {
+              next.genre = restored.genreHint;
+            }
+            manifestUpdated = true;
+          }
         }
       }
       // Heal missing coverUrl from covers/ folder on R2

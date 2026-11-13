@@ -43,8 +43,9 @@ import {
   ExistingTrackLookup,
   SpotflowIncomingItem,
   enrichTrackMetadataFromSpotflow,
+  fetchSpotflowTracksFromServer,
   ingestSpotflowTracks,
-  resolveSpotflowEndpoint,
+  isValidSpotflowKeyFormat,
 } from './api/_lib/spotflow';
 import { fetchSpotifyCollectionMetadata } from './api/_lib/spotifyAlbum';
 
@@ -735,51 +736,12 @@ async function startServer() {
       }
 
       const { spotflowUrl, apiKey, saveToR2, existingTracks: clientHints } = body;
-      const effectiveKey = String(apiKey || DEFAULT_SPOTFLOW_API_KEY).trim();
-      if (!spotflowUrl || !effectiveKey) {
-        return res.status(400).json({ error: 'Vui lòng cung cấp URL của SpotFlow và API Key.' });
-      }
 
-      const endpoint = resolveSpotflowEndpoint(String(spotflowUrl));
-      const trimmedKey = effectiveKey;
-
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'X-API-Key': trimmedKey,
-          'Authorization': `Bearer ${trimmedKey}`,
-          'Accept': 'application/json',
-        },
-      });
-
-      const rawBody = await response.text();
-
-      if (!response.ok) {
-        return res.status(response.status).json({
-          error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status} tại ${endpoint}). Kiểm tra lại URL hoặc API Key.`,
+      const { endpoint, effectiveApiKey, items: data } =
+        await fetchSpotflowTracksFromServer({
+          spotflowUrl: spotflowUrl ? String(spotflowUrl) : undefined,
+          apiKey: apiKey ? String(apiKey) : undefined,
         });
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(rawBody);
-      } catch {
-        return res.status(502).json({
-          error: `SpotFlow trả về HTML/văn bản thay vì JSON tại ${endpoint}. Hãy kiểm tra đúng REST API Endpoint hoặc đợi server SpotFlow khởi động xong.`,
-        });
-      }
-
-      const data: SpotflowIncomingItem[] | null = Array.isArray(parsed)
-        ? (parsed as SpotflowIncomingItem[])
-        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { tracks?: unknown }).tracks)
-          ? (parsed as { tracks: SpotflowIncomingItem[] }).tracks
-          : parsed && typeof parsed === 'object' && Array.isArray((parsed as { data?: unknown }).data)
-            ? (parsed as { data: SpotflowIncomingItem[] }).data
-            : null;
-
-      if (!data) {
-        return res.status(400).json({ error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).' });
-      }
 
       const r2Configured = isR2Configured();
       const r2Existing = r2Configured ? await getR2CatalogTracks() : [];
@@ -804,7 +766,7 @@ async function startServer() {
       const result = await ingestSpotflowTracks({
         items: data,
         baseEndpoint: endpoint,
-        apiKey: trimmedKey,
+        apiKey: effectiveApiKey,
         saveToR2: saveToR2 !== false,
         existingTracks: existingCombined,
         sourceLabel: 'SpotFlow MP3',
@@ -866,11 +828,12 @@ async function startServer() {
       );
       const isValidKey =
         Boolean(providedKey) &&
-        allowedKeys.some(expected => {
+        (allowedKeys.some(expected => {
           const a = Buffer.from(providedKey, 'utf8');
           const b = Buffer.from(expected, 'utf8');
           return a.length === b.length && crypto.timingSafeEqual(a, b);
-        });
+        }) ||
+          isValidSpotflowKeyFormat(providedKey));
 
       if (!isValidKey) {
         return res.status(401).json({

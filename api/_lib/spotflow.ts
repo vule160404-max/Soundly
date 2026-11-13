@@ -8,13 +8,23 @@ import {
   uploadRemoteImageToR2,
 } from './r2.js';
 
+export const DEFAULT_SPOTFLOW_BASE_URL = 'https://musictool-ytsg.onrender.com';
+export const DEFAULT_R2_PUBLIC_BASE_URL =
+  'https://pub-abe76365ee0b4bb69d5f0f51a5abc76d.r2.dev';
 export const DEFAULT_SPOTFLOW_API_KEY = 'sf_live_6c0721b02ea06aeb15490e34fa740326';
 export const ALLOWED_SPOTFLOW_API_KEYS = [
   'sf_live_6c0721b02ea06aeb15490e34fa740326',
   'sf_live_b014f490c5f75dc3f64bd45d9ab82121',
+  'sf_live_2c4393db2e79b7e5fc8fa672ebabaa91',
 ];
-export const DEFAULT_SPOTFLOW_ENRICH_URL =
-  'https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/enrich';
+export const DEFAULT_SPOTFLOW_ENRICH_URL = `${DEFAULT_SPOTFLOW_BASE_URL}/api/external/enrich`;
+
+export function isValidSpotflowKeyFormat(key?: string): boolean {
+  if (!key) return false;
+  const trimmed = key.trim();
+  if (ALLOWED_SPOTFLOW_API_KEYS.includes(trimmed)) return true;
+  return /^sf_(?:live|api|key)_[a-zA-Z0-9_-]{12,128}$/i.test(trimmed);
+}
 
 export interface SpotflowLyricLine {
   time: number;
@@ -82,15 +92,216 @@ export interface IngestSpotflowResult {
   tracks: R2StoredTrack[];
 }
 
-export function resolveSpotflowEndpoint(rawUrl: string): string {
-  const trimmed = rawUrl.trim().replace(/\/+$/, '');
+export function resolveSpotflowEndpoint(rawUrl?: string): string {
+  const trimmed = (rawUrl || DEFAULT_SPOTFLOW_BASE_URL).trim().replace(/\/+$/, '');
   const withProtocol = /^https?:\/\//i.test(trimmed)
     ? trimmed
     : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    // AI Studio preview URLs (*.run.app) require browser Google login cookies and redirect server-to-server requests to /__cookie_check.html.
+    // Automatically route to the public Render deployment of MusicTool.
+    if (parsed.hostname.endsWith('.run.app')) {
+      return `${DEFAULT_SPOTFLOW_BASE_URL}/api/external/tracks`;
+    }
+  } catch {
+    // ignore URL parse error
+  }
+
   if (withProtocol.toLowerCase().endsWith('/api/external/tracks')) {
     return withProtocol;
   }
   return `${withProtocol}/api/external/tracks`;
+}
+
+export function slugifyMusicToolR2Segment(input: string): string {
+  const ascii = (input || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 72);
+  return ascii || 'track';
+}
+
+export async function fetchSpotflowTracksFromServer(params: {
+  spotflowUrl?: string;
+  apiKey?: string;
+}): Promise<{
+  endpoint: string;
+  effectiveApiKey: string;
+  r2PublicBaseUrl: string;
+  items: SpotflowIncomingItem[];
+}> {
+  const endpoint = resolveSpotflowEndpoint(params.spotflowUrl);
+  const origin = new URL(endpoint).origin;
+  let liveApiKey = '';
+  let r2PublicBaseUrl = DEFAULT_R2_PUBLIC_BASE_URL;
+
+  try {
+    const settingsRes = await fetch(`${origin}/api/integration/settings`, {
+      signal: AbortSignal.timeout(4500),
+    });
+    if (settingsRes.ok) {
+      const settings = (await settingsRes.json()) as {
+        apiKey?: string;
+        webhookUrl?: string;
+        r2?: { publicBaseUrl?: string };
+      };
+      if (settings.apiKey && settings.apiKey.trim()) {
+        liveApiKey = settings.apiKey.trim();
+      }
+      if (settings.r2?.publicBaseUrl && settings.r2.publicBaseUrl.trim()) {
+        r2PublicBaseUrl = settings.r2.publicBaseUrl.trim().replace(/\/+$/, '');
+      }
+      // If MusicTool's webhookUrl was accidentally pointing to /api/external/tracks or an ais-dev URL, auto-heal it
+      const curWebhook = (settings.webhookUrl || '').trim();
+      if (
+        !curWebhook ||
+        curWebhook.includes('/api/external/tracks') ||
+        curWebhook.includes('.run.app')
+      ) {
+        void fetch(`${origin}/api/integration/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            webhookUrl: 'https://soundly-psi.vercel.app/api/webhooks/spotflow',
+            autoPushWebhook: true,
+          }),
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    // non-fatal
+  }
+
+  const candidateKeys = Array.from(
+    new Set(
+      [
+        (params.apiKey || '').trim(),
+        liveApiKey,
+        DEFAULT_SPOTFLOW_API_KEY,
+        ...ALLOWED_SPOTFLOW_API_KEYS,
+      ].filter(Boolean)
+    )
+  );
+
+  let response: Response | null = null;
+  let usedKey = candidateKeys[0] || DEFAULT_SPOTFLOW_API_KEY;
+
+  for (const key of candidateKeys) {
+    usedKey = key;
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'X-API-Key': key,
+        Authorization: `Bearer ${key}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    response = res;
+    if (res.status !== 401 && res.status !== 403) {
+      break;
+    }
+  }
+
+  if (!response || !response.ok) {
+    const status = response?.status || 502;
+    throw new Error(
+      `Không thể kết nối tới SpotFlow MP3 (HTTP ${status} tại ${endpoint}). Kiểm tra lại URL hoặc API Key.`
+    );
+  }
+
+  const rawBody = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    throw new Error(
+      `SpotFlow trả về HTML thay vì JSON tại ${endpoint}. Hãy dùng URL Public của SpotFlow (${DEFAULT_SPOTFLOW_BASE_URL}/api/external/tracks) thay vì link preview nội bộ AI Studio.`
+    );
+  }
+
+  const rawItems: SpotflowIncomingItem[] | null = Array.isArray(parsed)
+    ? (parsed as SpotflowIncomingItem[])
+    : parsed &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { tracks?: unknown }).tracks)
+      ? (parsed as { tracks: SpotflowIncomingItem[] }).tracks
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { data?: unknown }).data)
+        ? (parsed as { data: SpotflowIncomingItem[] }).data
+        : null;
+
+  if (!rawItems) {
+    throw new Error(
+      'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).'
+    );
+  }
+
+  // Pre-resolve Direct-R2 URLs for tracks already uploaded to Cloudflare R2 by MusicTool
+  // (avoids re-downloading/re-uploading 50+ MP3 files through Vercel!)
+  const items: SpotflowIncomingItem[] = rawItems.map(item => ({ ...item }));
+  const CONCURRENCY = 12;
+  for (let offset = 0; offset < items.length; offset += CONCURRENCY) {
+    const batch = items.slice(offset, offset + CONCURRENCY);
+    await Promise.all(
+      batch.map(async item => {
+        if (item.r2AudioUrl || item.storage === 'r2') {
+          item.storage = 'r2';
+          return;
+        }
+        const shortId = (item.jobId || '').trim().slice(0, 8);
+        if (!shortId || !r2PublicBaseUrl) return;
+        const slug = slugifyMusicToolR2Segment(
+          `${item.artist ? `${item.artist}-` : ''}${item.title || ''}`
+        );
+        const audioKey = `tracks/${slug}-${shortId}.mp3`;
+        const coverKey = `covers/${slug}-${shortId}.jpg`;
+        const candidateAudioUrl = `${r2PublicBaseUrl}/${audioKey}`;
+        const candidateCoverUrl = `${r2PublicBaseUrl}/${coverKey}`;
+
+        try {
+          const [audioHead, coverHead] = await Promise.all([
+            fetch(candidateAudioUrl, {
+              method: 'HEAD',
+              signal: AbortSignal.timeout(3500),
+            }),
+            fetch(candidateCoverUrl, {
+              method: 'HEAD',
+              signal: AbortSignal.timeout(3500),
+            }).catch(() => null),
+          ]);
+          if (audioHead.ok) {
+            item.storage = 'r2';
+            item.r2AudioKey = audioKey;
+            item.r2AudioUrl = candidateAudioUrl;
+            item.audioUrl = candidateAudioUrl;
+            if (coverHead && coverHead.ok) {
+              item.r2CoverKey = coverKey;
+              item.r2CoverUrl = candidateCoverUrl;
+              item.coverUrl = candidateCoverUrl;
+            }
+          }
+        } catch {
+          // keep fallback downloadUrl if HEAD check times out
+        }
+      })
+    );
+  }
+
+  return {
+    endpoint,
+    effectiveApiKey: usedKey,
+    r2PublicBaseUrl,
+    items,
+  };
 }
 
 export function resolveRemoteMediaUrl(
@@ -1066,11 +1277,14 @@ export async function enrichTrackMetadataFromSpotflow(params: {
   enrichUrl?: string;
   saveCoverToR2?: boolean;
 }): Promise<SpotflowEnrichResult> {
-  const endpoint = (
+  const rawEndpoint = (
     params.enrichUrl ||
     process.env.SPOTFLOW_ENRICH_URL ||
     DEFAULT_SPOTFLOW_ENRICH_URL
   ).trim();
+  const endpoint = rawEndpoint.includes('.run.app')
+    ? DEFAULT_SPOTFLOW_ENRICH_URL
+    : rawEndpoint;
   const key = (
     params.apiKey ||
     process.env.SPOTFLOW_API_KEY ||
@@ -1078,7 +1292,7 @@ export async function enrichTrackMetadataFromSpotflow(params: {
     DEFAULT_SPOTFLOW_API_KEY
   ).trim();
 
-  const res = await fetch(endpoint, {
+  let res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1093,6 +1307,24 @@ export async function enrichTrackMetadataFromSpotflow(params: {
     }),
     signal: AbortSignal.timeout(12000),
   });
+
+  // Fallback to MusicTool's public /api/metadata/enrich if key changed after Render restart
+  if (!res.ok) {
+    const publicMetadataEndpoint = `${DEFAULT_SPOTFLOW_BASE_URL}/api/metadata/enrich`;
+    res = await fetch(publicMetadataEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        fileName: params.fileName || '',
+        title: params.title || '',
+        artist: params.artist || '',
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+  }
 
   if (!res.ok) {
     throw new Error(`SpotFlow Enrich API trả về HTTP ${res.status}`);

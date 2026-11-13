@@ -110,7 +110,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // SpotFlow MP3 integration state
   const [spotflowUrl, setSpotflowUrl] = useState<string>(
-    'https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/tracks'
+    'https://musictool-ytsg.onrender.com/api/external/tracks'
   );
   const [spotflowApiKey, setSpotflowApiKey] = useState<string>(
     'sf_live_6c0721b02ea06aeb15490e34fa740326'
@@ -1134,7 +1134,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </label>
               <input
                 type="text"
-                placeholder="https://ais-dev-3glfgw6mbxhun2zk26j4iw-590460958091.asia-east1.run.app/api/external/tracks"
+                placeholder="https://musictool-ytsg.onrender.com/api/external/tracks"
                 value={spotflowUrl}
                 onChange={e => setSpotflowUrl(e.target.value)}
                 className="w-full bg-[#0d142c] border border-[#222f5e] rounded-lg px-3 py-2 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64]"
@@ -1182,12 +1182,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
 
           <div className="border-t border-[#1e2a54] pt-4 text-xs text-[#8d99be] space-y-1.5">
-            <p className="font-semibold text-[#f7f5f0]">Webhook Receiver Endpoint cho SpotFlow (Tự động đẩy khi tải xong):</p>
+            <p className="font-semibold text-[#f7f5f0]">Webhook Receiver Endpoint cho SpotFlow (Dán vào ô Webhook URL bên SpotFlow):</p>
             <p className="font-mono bg-[#0d142c] p-2.5 rounded-lg text-[11px] text-[#f47b64] select-all border border-[#222f5e]">
-              {window.location.origin}/api/webhooks/spotflow
+              {window.location.hostname.endsWith('.run.app')
+                ? 'https://soundly-psi.vercel.app/api/webhooks/spotflow'
+                : `${window.location.origin}/api/webhooks/spotflow`}
             </p>
             <p>
-              Hỗ trợ sự kiện <code className="text-[#f7f5f0]">track_downloaded</code> và tự động trả về HTTP 200 với <code className="text-[#f7f5f0]">ping_test</code>. Cấu hình biến <code className="text-[#f47b64]">SPOTFLOW_WEBHOOK_SECRET</code> trên server/Vercel để xác thực header <code className="text-[#f7f5f0]">X-API-Key</code>.
+              Hỗ trợ sự kiện <code className="text-[#f7f5f0]">track_downloaded</code> (nhận trực tiếp <code className="text-[#f47b64]">r2AudioUrl</code> / <code className="text-[#f47b64]">r2CoverUrl</code> trên R2 không cần tải lại) và tự động trả về HTTP 200 với <code className="text-[#f7f5f0]">ping_test</code>.
             </p>
           </div>
         </div>
