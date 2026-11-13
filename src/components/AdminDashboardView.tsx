@@ -828,11 +828,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           <div className="space-y-4 max-w-xl">
             <div>
               <label className="text-xs text-[#8d99be] font-semibold block mb-1">
-                URL Tool SpotFlow MP3:
+                URL Tool SpotFlow MP3 (Base URL hoặc REST API Endpoint):
               </label>
               <input
                 type="text"
-                placeholder="https://spotflow-tool.railway.app"
+                placeholder="https://musictool-ytsg.onrender.com/api/external/tracks"
                 value={spotflowUrl}
                 onChange={e => setSpotflowUrl(e.target.value)}
                 className="w-full bg-[#0d142c] border border-[#222f5e] rounded-lg px-3 py-2 text-xs text-[#f7f5f0] outline-none focus:border-[#f47b64]"

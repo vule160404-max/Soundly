@@ -540,39 +540,61 @@ async function startServer() {
         return res.status(400).json({ error: 'Vui lòng cung cấp URL của SpotFlow và API Key.' });
       }
 
-      const cleanUrl = spotflowUrl.replace(/\/+$/, '');
-      const endpoint = `${cleanUrl}/api/external/tracks`;
+      const trimmedUrl = String(spotflowUrl).trim().replace(/\/+$/, '');
+      const withProtocol = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+      const endpoint = withProtocol.toLowerCase().endsWith('/api/external/tracks')
+        ? withProtocol
+        : `${withProtocol}/api/external/tracks`;
 
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
-          'X-API-Key': apiKey,
-          'Authorization': `Bearer ${apiKey}`,
+          'X-API-Key': String(apiKey).trim(),
+          'Authorization': `Bearer ${String(apiKey).trim()}`,
           'Accept': 'application/json',
         },
       });
 
+      const rawBody = await response.text();
+
       if (!response.ok) {
         return res.status(response.status).json({
-          error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status}). Kiểm tra lại URL hoặc API Key.`,
+          error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status} tại ${endpoint}). Kiểm tra lại URL hoặc API Key.`,
         });
       }
 
-      const data = (await response.json()) as Array<{
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch {
+        return res.status(502).json({
+          error: `SpotFlow trả về HTML/văn bản thay vì JSON tại ${endpoint}. Hãy kiểm tra đúng REST API Endpoint hoặc đợi server SpotFlow khởi động xong.`,
+        });
+      }
+
+      type SpotflowItem = {
         jobId?: string;
-        title: string;
+        title?: string;
         artist?: string;
         album?: string;
         bitrate?: number;
-        downloadUrl: string;
+        downloadUrl?: string;
         syncedLyrics?: string;
         plainLyrics?: string;
         downloadedAt?: string;
         coverUrl?: string;
-      }>;
+      };
 
-      if (!Array.isArray(data)) {
-        return res.status(400).json({ error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát).' });
+      const data: SpotflowItem[] | null = Array.isArray(parsed)
+        ? (parsed as SpotflowItem[])
+        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { tracks?: unknown }).tracks)
+          ? (parsed as { tracks: SpotflowItem[] }).tracks
+          : parsed && typeof parsed === 'object' && Array.isArray((parsed as { data?: unknown }).data)
+            ? (parsed as { data: SpotflowItem[] }).data
+            : null;
+
+      if (!data) {
+        return res.status(400).json({ error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).' });
       }
 
       const r2Config = loadR2Config();
@@ -582,12 +604,27 @@ async function startServer() {
         data.map(async (item, idx) => {
           const trackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
           const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
-          let audioUrl = item.downloadUrl;
+          let audioUrl = item.downloadUrl || '';
+          if (audioUrl && !/^https?:\/\//i.test(audioUrl)) {
+            try {
+              audioUrl = new URL(audioUrl, endpoint).toString();
+            } catch {
+              // keep original
+            }
+          }
+          let coverUrl = item.coverUrl || '';
+          if (coverUrl && !/^https?:\/\//i.test(coverUrl)) {
+            try {
+              coverUrl = new URL(coverUrl, endpoint).toString();
+            } catch {
+              // keep original
+            }
+          }
 
-          if (shouldSaveToR2) {
+          if (shouldSaveToR2 && audioUrl) {
             try {
               const r2Upload = await uploadRemoteUrlToR2(
-                item.downloadUrl,
+                audioUrl,
                 `${item.artist || 'artist'} - ${item.title || 'song'}.mp3`
               );
               audioUrl = r2Upload.audioUrl;
@@ -603,7 +640,7 @@ async function startServer() {
             album: (item.album || 'SpotFlow MP3 Download').trim(),
             audioUrl,
             coverUrl:
-              item.coverUrl ||
+              coverUrl ||
               'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
             duration: 210,
             genre: 'Pop',

@@ -17,6 +17,40 @@ interface SpotflowBody {
   saveToR2?: boolean;
 }
 
+interface SpotflowTrackItem {
+  jobId?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  bitrate?: number;
+  downloadUrl?: string;
+  syncedLyrics?: string;
+  plainLyrics?: string;
+  downloadedAt?: string;
+  coverUrl?: string;
+}
+
+function resolveSpotflowEndpoint(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, '');
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  if (withProtocol.toLowerCase().endsWith('/api/external/tracks')) {
+    return withProtocol;
+  }
+  return `${withProtocol}/api/external/tracks`;
+}
+
+function resolveRemoteMediaUrl(rawUrl: string, baseEndpoint: string): string {
+  if (!rawUrl) return '';
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  try {
+    return new URL(rawUrl, baseEndpoint).toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 function parseSpotflowLyrics(
   syncedText?: string,
   plainText?: string
@@ -69,41 +103,51 @@ export default async function handler(
       return;
     }
 
-    const cleanUrl = spotflowUrl.replace(/\/+$/, '');
-    const endpoint = `${cleanUrl}/api/external/tracks`;
+    const endpoint = resolveSpotflowEndpoint(spotflowUrl);
 
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
-        'X-API-Key': apiKey,
-        Authorization: `Bearer ${apiKey}`,
+        'X-API-Key': apiKey.trim(),
+        Authorization: `Bearer ${apiKey.trim()}`,
         Accept: 'application/json',
       },
     });
 
+    const rawBody = await response.text();
+
     if (!response.ok) {
       sendJson(res, response.status, {
-        error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status}). Kiểm tra lại URL hoặc API Key.`,
+        error: `Không thể kết nối tới SpotFlow MP3 (HTTP ${response.status} tại ${endpoint}). Kiểm tra lại URL hoặc API Key.`,
       });
       return;
     }
 
-    const data = (await response.json()) as Array<{
-      jobId?: string;
-      title: string;
-      artist?: string;
-      album?: string;
-      bitrate?: number;
-      downloadUrl: string;
-      syncedLyrics?: string;
-      plainLyrics?: string;
-      downloadedAt?: string;
-      coverUrl?: string;
-    }>;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      sendJson(res, 502, {
+        error: `SpotFlow trả về HTML/văn bản thay vì JSON tại ${endpoint}. Hãy kiểm tra đúng REST API Endpoint hoặc đợi server SpotFlow (Render) khởi động xong rồi thử lại.`,
+      });
+      return;
+    }
 
-    if (!Array.isArray(data)) {
+    const items: SpotflowTrackItem[] | null = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { tracks?: unknown }).tracks)
+        ? (parsed as { tracks: SpotflowTrackItem[] }).tracks
+        : parsed &&
+            typeof parsed === 'object' &&
+            Array.isArray((parsed as { data?: unknown }).data)
+          ? (parsed as { data: SpotflowTrackItem[] }).data
+          : null;
+
+    if (!items) {
       sendJson(res, 400, {
-        error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát).',
+        error: 'Định dạng phản hồi từ SpotFlow không hợp lệ (cần là mảng bài hát JSON).',
       });
       return;
     }
@@ -112,15 +156,18 @@ export default async function handler(
     const shouldSaveToR2 = isR2Configured(r2Config) && saveToR2 !== false;
 
     const syncedTracks = await Promise.all(
-      data.map(async (item, idx) => {
+      items.map(async (item, idx) => {
         const trackId = `spotflow-${item.jobId || Date.now()}-${idx}`;
         const lyrics = parseSpotflowLyrics(item.syncedLyrics, item.plainLyrics);
-        let audioUrl = item.downloadUrl;
+        let audioUrl = resolveRemoteMediaUrl(item.downloadUrl || '', endpoint);
+        const coverUrl = item.coverUrl
+          ? resolveRemoteMediaUrl(item.coverUrl, endpoint)
+          : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
 
-        if (shouldSaveToR2) {
+        if (shouldSaveToR2 && audioUrl) {
           try {
             const r2Upload = await uploadRemoteUrlToR2(
-              item.downloadUrl,
+              audioUrl,
               `${item.artist || 'artist'} - ${item.title || 'song'}.mp3`
             );
             audioUrl = r2Upload.audioUrl;
@@ -138,9 +185,7 @@ export default async function handler(
           artist: (item.artist || 'Nghệ sĩ SpotFlow').trim(),
           album: (item.album || 'SpotFlow MP3 Download').trim(),
           audioUrl,
-          coverUrl:
-            item.coverUrl ||
-            'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+          coverUrl,
           duration: 210,
           genre: 'Pop',
           releaseYear: new Date().getFullYear(),

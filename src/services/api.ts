@@ -319,12 +319,31 @@ export const musicApi = {
     });
 
     if (!isJsonResponse(res)) {
-      throw new Error('Máy chủ Backend chưa sẵn sàng.');
+      throw new Error(`Máy chủ Backend chưa sẵn sàng (HTTP ${res.status}).`);
     }
 
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || 'Đồng bộ SpotFlow MP3 thất bại.');
+    }
+
+    const synced: Track[] = Array.isArray(data.tracks) ? data.tracks : [];
+    if (synced.length > 0) {
+      const currentLocal = getLocalCustomTracks();
+      const existingIds = new Set(currentLocal.map(t => t.id));
+      const merged = [
+        ...synced.filter(t => !existingIds.has(t.id)),
+        ...currentLocal,
+      ];
+      saveLocalCustomTracks(merged);
+
+      for (const track of synced) {
+        try {
+          await setDoc(doc(db, 'soundly_tracks', track.id), track);
+        } catch (err) {
+          console.warn('Could not save synced SpotFlow track to Firestore:', err);
+        }
+      }
     }
 
     return data;
