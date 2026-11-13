@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile information",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["userId", "email"]
+    },
+    "UserPlaylist": {
+      "title": "UserPlaylist",
+      "description": "A playlist created by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "trackIds": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title"]
+    },
+    "UserLikedTrack": {
+      "title": "UserLikedTrack",
+      "description": "A track liked by a user",
+      "type": "object",
+      "properties": {
+        "trackId": { "type": "string" },
+        "userId": { "type": "string" },
+        "addedAt": { "type": "string" }
+      },
+      "required": ["trackId", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Profile of authenticated user with admin access for vule160404@gmail.com"
+    },
+    "/users/{userId}/playlists/{playlistId}": {
+      "schema": "UserPlaylist",
+      "description": "User custom playlists"
+    },
+    "/users/{userId}/liked/{trackId}": {
+      "schema": "UserLikedTrack",
+      "description": "Tracks liked by the user"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Soundly",
+  "description": "Soundly — Âm nhạc của bạn, theo cách riêng. Ứng dụng nghe nhạc trực tuyến hoàn toàn miễn phí với kho nhạc đa thể loại và lời bài hát đồng bộ mượt mà.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
