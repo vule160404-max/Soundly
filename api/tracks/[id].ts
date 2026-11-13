@@ -7,6 +7,7 @@ import {
   deleteR2CatalogTrack,
   R2StoredTrack,
 } from '../_lib/r2.js';
+import { fetchSpotifyCollectionMetadata } from '../_lib/spotifyAlbum.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
 interface BatchBody {
@@ -16,6 +17,11 @@ interface BatchBody {
 interface PlayTrackBody {
   trackId?: string;
   id?: string;
+}
+
+interface SpotifyAlbumBody {
+  url?: string;
+  spotifyUrl?: string;
 }
 
 export default async function handler(
@@ -31,6 +37,36 @@ export default async function handler(
 
   if (!id) {
     sendJson(res, 400, { error: 'Track ID is required' });
+    return;
+  }
+
+  // Handle POST /api/tracks/spotify-album
+  if (id === 'spotify-album') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method Not Allowed' });
+      return;
+    }
+    try {
+      const body = await readJsonBody<SpotifyAlbumBody>(req);
+      const rawUrl = String(body.url || body.spotifyUrl || '').trim();
+      if (!rawUrl) {
+        sendJson(res, 400, {
+          error: 'Vui lòng nhập đường dẫn (link) Album hoặc Playlist từ Spotify.',
+        });
+        return;
+      }
+
+      const collection = await fetchSpotifyCollectionMetadata(rawUrl);
+      sendJson(res, 200, collection);
+    } catch (err: unknown) {
+      console.error('Error parsing Spotify album/playlist:', err);
+      sendJson(res, 400, {
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Không thể lấy thông tin Album từ Spotify.',
+      });
+    }
     return;
   }
 

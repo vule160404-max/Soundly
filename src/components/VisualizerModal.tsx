@@ -86,7 +86,7 @@ export const VisualizerModal: React.FC = () => {
       role="dialog"
       aria-modal="true"
       onClick={() => setIsVisualizerOpen(false)}
-      className="fixed inset-0 z-50 bg-[#040714]/82 backdrop-blur-md flex items-center justify-center p-4 soundly-backdrop"
+      className="fixed inset-0 z-50 bg-[#040714]/82 backdrop-blur-md flex items-center justify-center p-4 soundly-backdrop soundly-modal-safe"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -108,9 +108,9 @@ export const VisualizerModal: React.FC = () => {
             type="button"
             onClick={() => setIsVisualizerOpen(false)}
             aria-label="Đóng hộp thoại"
-            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] border border-white/10 text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/10 active:scale-95 transition-all"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 

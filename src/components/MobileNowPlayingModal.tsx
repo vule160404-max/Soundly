@@ -79,19 +79,24 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: '100%', opacity: 0.6 }}
           transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-          className="fixed inset-0 z-50 bg-gradient-to-b from-[#162252] via-[#0d142c] to-[#070b1a] flex flex-col md:hidden text-[#f7f5f0] select-none"
+          className="fixed inset-0 z-50 bg-gradient-to-b from-[#162252] via-[#0d142c] to-[#070b1a] flex flex-col md:hidden text-[#f7f5f0] select-none soundly-overlay-top-safe soundly-bottom-safe"
         >
+      {/* Top Drag Indicator Pill */}
+      <div className="w-10 h-1 rounded-full bg-white/20 mx-auto mb-1 shrink-0" />
+
       {/* Top Bar / Minimize Header */}
-      <div className="px-4 py-3 flex items-center justify-between">
+      <div className="px-4 py-2.5 flex items-center justify-between gap-2 shrink-0">
         <button
+          type="button"
           onClick={onClose}
-          className="min-h-[44px] min-w-[44px] flex items-center justify-center text-[#f7f5f0] active:scale-95"
+          className="min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.08] active:bg-white/[0.16] border border-white/10 flex items-center justify-center text-[#f7f5f0] active:scale-95 transition-all shrink-0 touch-manipulation"
           title="Thu nhỏ"
+          aria-label="Thu nhỏ trình phát nhạc"
         >
-          <ChevronDown className="w-7 h-7" />
+          <ChevronDown className="w-6 h-6" />
         </button>
 
-        <div className="text-center truncate px-2">
+        <div className="text-center truncate px-2 min-w-0 flex-1">
           <p className="text-[10px] uppercase font-bold tracking-wider text-[#a3aed0]">
             Đang phát trên Soundly
           </p>
@@ -101,6 +106,7 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
         </div>
 
         <button
+          type="button"
           onClick={() => {
             if (navigator.share) {
               navigator.share({
@@ -110,8 +116,9 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
               }).catch(() => {});
             }
           }}
-          className="min-h-[44px] min-w-[44px] flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0] active:scale-95"
+          className="min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.08] active:bg-white/[0.16] border border-white/10 flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0] active:scale-95 transition-all shrink-0 touch-manipulation"
           title="Chia sẻ"
+          aria-label="Chia sẻ bài hát"
         >
           <Share2 className="w-5 h-5" />
         </button>

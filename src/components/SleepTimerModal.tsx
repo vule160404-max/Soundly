@@ -51,7 +51,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({ isOpen, onClos
       aria-modal="true"
       aria-labelledby="sleep-timer-title"
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop"
+      className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop soundly-modal-safe"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -80,9 +80,9 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({ isOpen, onClos
               type="button"
               onClick={onClose}
               aria-label="Đóng hộp thoại"
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] border border-white/10 text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/10 active:scale-95 transition-all"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 

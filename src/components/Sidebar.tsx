@@ -62,14 +62,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-[#070b1a] text-[#a3aed0] select-none p-2 gap-2">
+    <div
+      className={`flex flex-col h-full bg-[#070b1a] text-[#a3aed0] select-none p-2 gap-2 ${
+        isMobileOpen ? 'soundly-overlay-top-safe soundly-bottom-safe' : ''
+      }`}
+    >
       {/* Box 1: Brand & Top Navigation */}
       <div className="bg-[#0d142c] border border-[#1e2a54] rounded-xl p-4 space-y-3">
         {/* Brand */}
-        <div className="flex items-center justify-between pb-1">
+        <div className="flex items-center justify-between pb-1 gap-2">
           <button
+            type="button"
             onClick={() => navigateTo('home')}
-            className="flex items-center gap-3 text-left group focus:outline-none"
+            className="flex items-center gap-3 text-left group focus:outline-none min-h-[44px]"
           >
             <div className="w-9 h-9 rounded-xl overflow-hidden bg-[#f7f5f0] shadow-md shadow-[#0c1957]/40 ring-1 ring-white/15 group-hover:scale-105 transition-transform shrink-0">
               <img
@@ -90,8 +95,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {isMobileOpen && (
             <button
+              type="button"
               onClick={onCloseMobile}
-              className="md:hidden p-1.5 text-[#a3aed0] hover:text-[#f7f5f0]"
+              aria-label="Đóng menu"
+              className="md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-[#162047] active:bg-[#1e2b5c] border border-[#2b3b75] text-[#f7f5f0] active:scale-95 transition-all shrink-0 touch-manipulation"
             >
               <X className="w-5 h-5" />
             </button>
@@ -169,9 +176,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={handleOpenCreateAlbum}
             title="Tạo album mới trong thư viện"
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#162047] hover:bg-[#f47b64] text-[#f7f5f0] hover:text-[#070b1a] text-[11px] font-bold transition-colors"
+            className="min-h-[40px] flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#162047] hover:bg-[#f47b64] text-[#f7f5f0] hover:text-[#070b1a] text-[11px] font-bold transition-colors touch-manipulation"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Tạo album</span>

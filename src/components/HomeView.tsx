@@ -33,7 +33,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     togglePlay,
     userPlaylists,
     openAlbumPicker,
-    setIsCreateAlbumModalOpen,
+    openCreateAlbumModal,
   } = usePlayer();
 
   const getGreeting = () => {
@@ -298,19 +298,29 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Personal Albums Section */}
           <section>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
                 <Disc3 className="w-5 h-5 text-[#f47b64]" />
                 <span>Album thư viện của bạn</span>
               </h3>
-              <button
-                type="button"
-                onClick={() => setIsCreateAlbumModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] hover:border-[#f47b64]/50 text-xs font-bold text-[#f7f5f0] transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5 text-[#f47b64]" />
-                <span>Tạo album mới</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openCreateAlbumModal('spotify')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f47b64]/15 hover:bg-[#f47b64]/25 border border-[#f47b64]/40 text-xs font-bold text-[#ff9d8a] transition-colors"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[#f47b64]" />
+                  <span>Tạo từ link Spotify</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateAlbumModal('manual')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] hover:border-[#f47b64]/50 text-xs font-bold text-[#f7f5f0] transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#f47b64]" />
+                  <span>Tạo album mới</span>
+                </button>
+              </div>
             </div>
 
             {userPlaylists.length > 0 ? (
@@ -348,16 +358,26 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <div>
                   <p className="text-xs font-bold text-[#f7f5f0]">Chưa có album cá nhân nào</p>
                   <p className="text-[11px] text-[#a3aed0] mt-0.5">
-                    Tạo album riêng rồi bấm nút thêm (+) trên từng bài hát để lưu vào bộ sưu tập của bạn.
+                    Dán link Album/Playlist từ Spotify để Soundly tự động gom đủ bài hát hoặc tạo album riêng của bạn.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateAlbumModalOpen(true)}
-                  className="px-4 py-2 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shrink-0 transition-colors"
-                >
-                  + Tạo album ngay
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openCreateAlbumModal('spotify')}
+                    className="px-4 py-2 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shrink-0 transition-colors flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Dán link Spotify</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCreateAlbumModal('manual')}
+                    className="px-3.5 py-2 rounded-full bg-[#162047] hover:bg-[#1e2c60] text-[#f7f5f0] font-bold text-xs shrink-0 transition-colors border border-white/10"
+                  >
+                    + Tạo thủ công
+                  </button>
+                </div>
               </div>
             )}
           </section>

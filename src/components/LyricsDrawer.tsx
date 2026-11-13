@@ -109,10 +109,10 @@ export const LyricsDrawer: React.FC = () => {
             isFullscreen
               ? 'inset-0 bg-[#0d142c]'
               : 'inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] md:w-[460px] bg-[#0d142c]/98 md:border-l md:border-[#222f5e] shadow-2xl'
-          } backdrop-blur-xl flex flex-col text-[#f7f5f0]`}
+          } backdrop-blur-xl flex flex-col text-[#f7f5f0] soundly-overlay-top-safe soundly-bottom-safe`}
         >
       {/* Drawer Header with Saved Cover Art */}
-      <div className="p-4 px-5 border-b border-[#1e2a54] flex items-center justify-between gap-3">
+      <div className="p-4 px-5 border-b border-[#1e2a54] flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           {currentTrack?.coverUrl ? (
             <img
@@ -143,14 +143,14 @@ export const LyricsDrawer: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {hasSynced && hasPlain && (
-            <div className="flex items-center bg-[#070b1a] border border-[#1e2a54] rounded-lg p-0.5 mr-1">
+            <div className="flex items-center bg-[#070b1a] border border-[#1e2a54] rounded-xl p-1 mr-0.5">
               <button
                 type="button"
                 onClick={() => setViewMode('synced')}
                 title="Lời đồng bộ theo giây"
-                className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${
+                className={`min-h-[34px] px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors ${
                   effectiveMode === 'synced'
                     ? 'bg-[#f47b64] text-[#070b1a]'
                     : 'text-[#a3aed0] hover:text-[#f7f5f0]'
@@ -163,7 +163,7 @@ export const LyricsDrawer: React.FC = () => {
                 type="button"
                 onClick={() => setViewMode('plain')}
                 title="Lời văn bản thuần"
-                className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${
+                className={`min-h-[34px] px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors ${
                   effectiveMode === 'plain'
                     ? 'bg-[#f47b64] text-[#070b1a]'
                     : 'text-[#a3aed0] hover:text-[#f7f5f0]'
@@ -178,7 +178,7 @@ export const LyricsDrawer: React.FC = () => {
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
             title={isFullscreen ? 'Thu nhỏ' : 'Toàn màn hình'}
-            className="p-2 rounded-full text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
+            className="hidden md:flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -186,9 +186,10 @@ export const LyricsDrawer: React.FC = () => {
           <button
             onClick={() => setIsLyricsOpen(false)}
             title="Đóng lời bài hát"
-            className="p-2 rounded-full text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
+            aria-label="Đóng lời bài hát"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-[#162047] border border-[#2b3b75] text-[#f7f5f0] hover:bg-[#1f2c5c] active:scale-95 transition-all"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
       </div>

@@ -35,7 +35,8 @@ export const OfflineIndicator: React.FC = () => {
     <div
       role="status"
       aria-live="polite"
-      className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold shadow-xl border transition-all ${
+      style={{ top: 'calc(max(env(safe-area-inset-top, 0px), 12px) + 6px)' }}
+      className={`fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold shadow-xl border transition-all ${
         isOnline
           ? 'bg-emerald-950/95 text-emerald-200 border-emerald-500/40'
           : 'bg-[#1a1025]/95 text-amber-200 border-amber-500/40'

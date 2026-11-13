@@ -15,7 +15,7 @@ export const LoginGate: React.FC = () => {
   const inIframe = isEmbeddedIframe();
 
   return (
-    <div className="min-h-screen w-screen bg-[#070b1a] text-[#f7f5f0] flex flex-col justify-between items-center p-5 sm:p-8 relative overflow-hidden select-none">
+    <div className="min-h-[100dvh] w-screen bg-[#070b1a] text-[#f7f5f0] flex flex-col justify-between items-center p-5 sm:p-8 relative overflow-hidden select-none soundly-overlay-top-safe soundly-bottom-safe">
       {/* Background Ambient Glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] h-[560px] bg-[#0c1957]/45 rounded-full blur-[150px] pointer-events-none" />
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[340px] h-[340px] bg-[#f47b64]/12 rounded-full blur-[120px] pointer-events-none" />

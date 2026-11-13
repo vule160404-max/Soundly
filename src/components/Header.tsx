@@ -243,22 +243,189 @@ export const Header: React.FC<HeaderProps> = ({
 
   let itemCursor = -1;
 
-  return (
-    <header className="sticky top-0 z-30 bg-[#0d142c]/95 backdrop-blur-md border-b border-[#1e2a54] px-4 md:px-6 py-3 flex flex-col gap-2.5 select-none text-[#f7f5f0]">
-      <div className="flex items-center justify-between gap-3">
-        {/* Mobile Menu Button */}
-        {onOpenMobileMenu && (
-          <button
-            onClick={onOpenMobileMenu}
-            className="md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0] rounded-xl hover:bg-[#162047] transition-colors shrink-0"
-            title="Mở menu thư viện"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        )}
+  const renderRightActions = () => (
+    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <PWAInstallButton />
 
+      {/* Admin Quick Link Button (Visible exclusively for admin) */}
+      {isAdmin && onOpenAdmin && (
+        <button
+          type="button"
+          onClick={onOpenAdmin}
+          className="min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-0 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-[#f47b64]/15 hover:bg-[#f47b64]/25 active:scale-95 text-[#f47b64] border border-[#f47b64]/45 transition-all shrink-0 whitespace-nowrap touch-manipulation"
+          title="Khu vực Quản trị viên"
+        >
+          <ShieldCheck className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#f47b64]" />
+          <span className="hidden sm:inline">Quản trị</span>
+        </button>
+      )}
+
+      {/* Sleep Timer Indicator / Trigger Button */}
+      <button
+        type="button"
+        onClick={onOpenSleepTimer}
+        title={
+          sleepTimerRemaining
+            ? `Đang hẹn giờ: còn ${formatTimer(sleepTimerRemaining)}`
+            : 'Hẹn giờ tắt nhạc'
+        }
+        className={`min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-0 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border active:scale-95 transition-all shrink-0 whitespace-nowrap touch-manipulation ${
+          sleepTimerRemaining
+            ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45'
+            : 'bg-[#141d3d] text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:bg-[#1a254d]'
+        }`}
+      >
+        {sleepTimerRemaining ? (
+          <>
+            <Clock
+              className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#f47b64] animate-spin"
+              style={{ animationDuration: '6s' }}
+            />
+            <span className="font-mono tabular-nums">
+              {formatTimer(sleepTimerRemaining)}
+            </span>
+          </>
+        ) : (
+          <>
+            <Moon className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#a3aed0]" />
+            <span className="hidden sm:inline">Hẹn giờ</span>
+          </>
+        )}
+      </button>
+
+      {/* User Auth: Login Button or Profile Dropdown */}
+      {user ? (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+            className="min-h-[44px] min-w-[44px] sm:min-h-[40px] flex items-center justify-center gap-2 p-1 sm:pl-1.5 sm:pr-2.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] active:scale-95 border border-[#222f5e] transition-all touch-manipulation"
+            aria-label="Mở menu tài khoản"
+          >
+            {user.photoURL ? (
+              <img
+                src={user.photoURL}
+                alt={user.displayName || 'Avatar'}
+                referrerPolicy="no-referrer"
+                className="w-8 h-8 sm:w-7 sm:h-7 rounded-full object-cover shrink-0"
+              />
+            ) : (
+              <div className="w-8 h-8 sm:w-7 sm:h-7 rounded-full bg-[#f47b64] text-[#070b1a] font-bold text-xs flex items-center justify-center">
+                {user.displayName?.[0] || 'U'}
+              </div>
+            )}
+            <span className="text-xs font-bold text-[#f7f5f0] max-w-[90px] sm:max-w-[130px] truncate hidden sm:inline">
+              {user.displayName || 'Tài khoản'}
+            </span>
+          </button>
+
+          {/* Profile Dropdown */}
+          <AnimatePresence>
+            {isProfileMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setIsProfileMenuOpen(false)}
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                  onClick={() => setIsProfileMenuOpen(false)}
+                  className="absolute right-0 top-full mt-2 z-40 w-64 bg-[#141d3d] rounded-2xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0]"
+                >
+                  <div className="p-3 border-b border-[#222f5e]">
+                    <p className="font-bold text-[#f7f5f0] truncate text-sm">
+                      {user.displayName || 'Tài khoản Google'}
+                    </p>
+                    <p className="text-[#a3aed0] truncate text-[11px] mt-0.5">
+                      {user.email}
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#f47b64] font-semibold bg-[#f47b64]/12 px-2 py-0.5 rounded-full w-fit">
+                      <Sparkles className="w-3 h-3" />
+                      <span>
+                        {isAdmin ? 'Quản trị viên (Admin)' : 'Thành viên Soundly'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {isAdmin && onOpenAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        onOpenAdmin();
+                      }}
+                      className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-[#1c2852] text-[#f47b64] font-bold transition-colors my-1"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-[#f47b64]" />
+                      <span>Bảng điều khiển Quản trị</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => logout()}
+                    className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-[#1c2852] text-rose-400 font-semibold transition-colors mt-1"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Đăng xuất</span>
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsLoginModalOpen(true)}
+          className="min-h-[44px] px-4 sm:px-5 rounded-full bg-[#f7f5f0] hover:bg-white text-[#070b1a] font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md active:scale-95 transition-all touch-manipulation"
+        >
+          <span>Đăng nhập</span>
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <header className="sticky top-0 z-30 bg-[#0d142c]/95 backdrop-blur-md border-b border-[#1e2a54] px-3.5 sm:px-4 md:px-6 pb-2.5 pt-2.5 md:py-3 soundly-header-safe flex flex-col gap-2.5 select-none text-[#f7f5f0]">
+      {/* Mobile Top Row: Dedicated Easy-Reach Action Bar (Below iPhone Notch / Status Bar) */}
+      <div className="flex md:hidden items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {onOpenMobileMenu && (
+            <button
+              type="button"
+              onClick={onOpenMobileMenu}
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center bg-[#141d3d] active:bg-[#1e2b5c] border border-[#222f5e] text-[#f7f5f0] rounded-xl active:scale-95 transition-all shrink-0 touch-manipulation"
+              title="Mở menu thư viện"
+              aria-label="Mở menu thư viện"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl overflow-hidden bg-[#f7f5f0] ring-1 ring-white/15 shrink-0">
+              <img
+                src="/assets/aistudio/Logo_Soundly_b8420ae4.svg"
+                alt="Soundly Logo"
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <span className="text-base font-black tracking-tight text-[#f7f5f0] truncate">
+              Soundly
+            </span>
+          </div>
+        </div>
+
+        {renderRightActions()}
+      </div>
+
+      {/* Search Bar Row + Desktop Right Actions */}
+      <div className="flex items-center justify-between gap-3">
         {/* Soundly Search Bar + Instant Autocomplete Suggestions */}
-        <div ref={searchContainerRef} className="relative flex-1 max-w-lg">
+        <div ref={searchContainerRef} className="relative flex-1 md:max-w-lg">
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#a3aed0]">
               <Search className="w-4 h-4" />
@@ -276,7 +443,7 @@ export const Header: React.FC<HeaderProps> = ({
               placeholder="Tìm bài hát, nghệ sĩ hoặc thể loại..."
               aria-label="Tìm bài hát, nghệ sĩ hoặc thể loại"
               aria-expanded={isSearchOpen}
-              className="w-full min-h-[40px] pl-9.5 pr-9 py-2 bg-[#141d3d] hover:bg-[#1a254d] focus:bg-[#1a254d] text-xs sm:text-sm text-[#f7f5f0] placeholder-[#7f8bb3] rounded-full border border-[#222f5e] focus:border-[#f47b64]/60 transition-all outline-none"
+              className="w-full min-h-[44px] md:min-h-[40px] pl-10 pr-10 py-2 bg-[#141d3d] hover:bg-[#1a254d] focus:bg-[#1a254d] text-base sm:text-sm text-[#f7f5f0] placeholder-[#7f8bb3] rounded-full border border-[#222f5e] focus:border-[#f47b64]/60 transition-all outline-none"
             />
             {searchQuery && (
               <button
@@ -286,9 +453,9 @@ export const Header: React.FC<HeaderProps> = ({
                   searchInputRef.current?.focus();
                 }}
                 aria-label="Xóa từ khóa tìm kiếm"
-                className="absolute inset-y-0 right-0 pr-3 min-w-[36px] flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0]"
+                className="absolute inset-y-0 right-0 pr-2.5 min-w-[44px] flex items-center justify-center text-[#a3aed0] hover:text-[#f7f5f0] touch-manipulation"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -301,7 +468,7 @@ export const Header: React.FC<HeaderProps> = ({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.985 }}
                 transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                className="absolute left-0 right-0 top-full mt-2 z-50 bg-[#101836]/98 backdrop-blur-xl rounded-2xl border border-[#2b3b75] shadow-2xl overflow-hidden max-h-[72vh] overflow-y-auto"
+                className="absolute left-0 right-0 top-full mt-2 z-50 bg-[#101836]/98 backdrop-blur-xl rounded-2xl border border-[#2b3b75] shadow-2xl overflow-hidden max-h-[65vh] overflow-y-auto"
               >
               {/* Recent Searches when input is empty */}
               {!hasQuery && recentSearches.length > 0 && (
@@ -326,7 +493,7 @@ export const Header: React.FC<HeaderProps> = ({
                         <button
                           type="button"
                           onClick={e => removeRecentSearch(term, e)}
-                          className="p-0.5 rounded-full text-[#8d99be] hover:text-[#f7f5f0]"
+                          className="p-1 rounded-full text-[#8d99be] hover:text-[#f7f5f0]"
                           aria-label={`Xóa "${term}" khỏi lịch sử`}
                         >
                           <X className="w-3 h-3" />
@@ -473,7 +640,7 @@ export const Header: React.FC<HeaderProps> = ({
                               onClick={() =>
                                 activateSuggestion({ kind: 'genre', genre })
                               }
-                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left text-xs font-semibold transition-colors min-h-[40px] ${
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left text-xs font-semibold transition-colors min-h-[44px] ${
                                 isHighlighted
                                   ? 'bg-[#1e2b5c] text-[#f7f5f0]'
                                   : 'hover:bg-[#17224b] text-[#f7f5f0]'
@@ -501,7 +668,7 @@ export const Header: React.FC<HeaderProps> = ({
                           onNavigateToExplore();
                           setIsSearchOpen(false);
                         }}
-                        className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#162047]/80 hover:bg-[#1e2b5c] text-xs font-bold text-[#f47b64] transition-colors"
+                        className="w-full min-h-[44px] flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#162047]/80 hover:bg-[#1e2b5c] text-xs font-bold text-[#f47b64] transition-colors"
                       >
                         <span className="truncate">
                           Xem tất cả kết quả cho “{searchQuery.trim()}”
@@ -517,136 +684,9 @@ export const Header: React.FC<HeaderProps> = ({
           </AnimatePresence>
         </div>
 
-        {/* Right Actions: PWA Install, Sleep Timer & Login / Profile */}
-        <div className="flex items-center gap-2 shrink-0">
-          <PWAInstallButton />
-
-          {/* Admin Quick Link Button (Visible exclusively for admin) */}
-          {isAdmin && onOpenAdmin && (
-            <button
-              onClick={onOpenAdmin}
-              className="min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-[#f47b64]/15 hover:bg-[#f47b64]/25 text-[#f47b64] border border-[#f47b64]/45 transition-colors shrink-0 whitespace-nowrap"
-              title="Khu vực Quản trị viên"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#f47b64]" />
-              <span className="hidden sm:inline">Quản trị</span>
-            </button>
-          )}
-
-          {/* Sleep Timer Indicator / Trigger Button */}
-          <button
-            onClick={onOpenSleepTimer}
-            title={
-              sleepTimerRemaining
-                ? `Đang hẹn giờ: còn ${formatTimer(sleepTimerRemaining)}`
-                : 'Hẹn giờ tắt nhạc'
-            }
-            className={`min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors shrink-0 whitespace-nowrap ${
-              sleepTimerRemaining
-                ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45'
-                : 'bg-[#141d3d] text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:bg-[#1a254d]'
-            }`}
-          >
-            {sleepTimerRemaining ? (
-              <>
-                <Clock
-                  className="w-3.5 h-3.5 text-[#f47b64] animate-spin"
-                  style={{ animationDuration: '6s' }}
-                />
-                <span className="font-mono tabular-nums">
-                  {formatTimer(sleepTimerRemaining)}
-                </span>
-              </>
-            ) : (
-              <>
-                <Moon className="w-3.5 h-3.5 text-[#a3aed0]" />
-                <span className="hidden sm:inline">Hẹn giờ</span>
-              </>
-            )}
-          </button>
-
-          {/* User Auth: Login Button or Profile Dropdown */}
-          {user ? (
-            <div className="relative">
-              <button
-                onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-                className="flex items-center gap-2 p-1 pl-1.5 pr-2.5 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] transition-colors"
-              >
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt={user.displayName || 'Avatar'}
-                    referrerPolicy="no-referrer"
-                    className="w-7 h-7 rounded-full object-cover shrink-0"
-                  />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-[#f47b64] text-[#070b1a] font-bold text-xs flex items-center justify-center">
-                    {user.displayName?.[0] || 'U'}
-                  </div>
-                )}
-                <span className="text-xs font-bold text-[#f7f5f0] max-w-[90px] sm:max-w-[130px] truncate hidden sm:inline">
-                  {user.displayName || 'Tài khoản'}
-                </span>
-              </button>
-
-              {/* Profile Dropdown */}
-              <AnimatePresence>
-                {isProfileMenuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                    transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                    onClick={() => setIsProfileMenuOpen(false)}
-                    className="absolute right-0 top-full mt-2 z-40 w-64 bg-[#141d3d] rounded-2xl shadow-2xl border border-[#2b3b75] p-2 text-xs text-[#f7f5f0]"
-                  >
-                  <div className="p-3 border-b border-[#222f5e]">
-                    <p className="font-bold text-[#f7f5f0] truncate text-sm">
-                      {user.displayName || 'Tài khoản Google'}
-                    </p>
-                    <p className="text-[#a3aed0] truncate text-[11px] mt-0.5">
-                      {user.email}
-                    </p>
-                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#f47b64] font-semibold bg-[#f47b64]/12 px-2 py-0.5 rounded-full w-fit">
-                      <Sparkles className="w-3 h-3" />
-                      <span>
-                        {isAdmin ? 'Quản trị viên (Admin)' : 'Thành viên Soundly'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {isAdmin && onOpenAdmin && (
-                    <button
-                      onClick={() => {
-                        setIsProfileMenuOpen(false);
-                        onOpenAdmin();
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-[#1c2852] text-[#f47b64] font-bold transition-colors my-1"
-                    >
-                      <ShieldCheck className="w-4 h-4 text-[#f47b64]" />
-                      <span>Bảng điều khiển Quản trị</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => logout()}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-[#1c2852] text-rose-400 font-semibold transition-colors mt-1"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span>Đăng xuất</span>
-                  </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ) : (
-            <button
-              onClick={() => setIsLoginModalOpen(true)}
-              className="h-10 px-5 rounded-full bg-[#f7f5f0] hover:bg-white text-[#070b1a] font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md hover:scale-105 active:scale-95 transition-all"
-            >
-              <span>Đăng nhập</span>
-            </button>
-          )}
+        {/* Desktop Right Actions */}
+        <div className="hidden md:flex">
+          {renderRightActions()}
         </div>
       </div>
 

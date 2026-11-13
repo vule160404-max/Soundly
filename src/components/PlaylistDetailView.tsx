@@ -29,7 +29,14 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   } = usePlayer();
 
   const playlistTracks = playlist.trackIds
-    .map((id) => allTracks.find((t) => t.id === id))
+    .map((id) =>
+      allTracks.find(
+        (t) =>
+          t.id === id ||
+          (t.spotifyTrackId && `spotflow-${t.spotifyTrackId}` === id) ||
+          (t.spotifyTrackId && t.spotifyTrackId === id)
+      )
+    )
     .filter((t): t is Track => t !== undefined);
 
   const totalSeconds = playlistTracks.reduce((acc, t) => acc + (t.duration || 0), 0);

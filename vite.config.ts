@@ -91,10 +91,28 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
         },
       }),
+      {
+        name: 'disable-vite-hmr-ws',
+        enforce: 'post',
+        transform(code, id) {
+          if (id.includes('vite/dist/client/client.mjs')) {
+            return code
+              .replace(
+                /transport\.connect\(createHMRHandler\(handleMessage\)\);/g,
+                '/* HMR WebSocket disabled in middleware mode */'
+              )
+              .replace(
+                /reject\(\/\* @__PURE__ \*\/ new Error\("WebSocket closed without opened\."\)\);/g,
+                'resolve();'
+              );
+          }
+          return null;
+        },
+      },
     ],
     resolve: {
       alias: {
@@ -104,6 +122,7 @@ export default defineConfig(() => {
     server: {
       // HMR is disabled in AI Studio to prevent WebSocket connection errors in middleware mode.
       hmr: false,
+      ws: false,
       watch: null,
     },
   };

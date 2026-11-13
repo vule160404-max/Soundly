@@ -37,6 +37,7 @@ import {
   findArtistByNameOrId,
   matchesTrackSearch,
 } from './utils/artistSync';
+import { deduplicateTracksList } from './utils/trackDedupe';
 import { Loader2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -202,7 +203,7 @@ const MainContent: React.FC = () => {
 
   // 3. Authenticated App Experience
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#070b1a] text-[#f7f5f0] font-sans">
+    <div className="flex h-[100dvh] w-screen overflow-hidden bg-[#070b1a] text-[#f7f5f0] font-sans">
       <OfflineIndicator />
 
       {/* SIDEBAR (Desktop Persistent & Mobile Drawer) */}
@@ -338,6 +339,10 @@ const MainContent: React.FC = () => {
       />
       <VisualizerModal />
       <CreateAlbumModal
+        allTracks={allTracks}
+        onTracksAdded={(newTracks) => {
+          setAllTracks((prev) => deduplicateTracksList([...newTracks, ...prev]).deduped);
+        }}
         onCreated={(newAlbum) => {
           setSelectedPlaylistId(newAlbum.id);
           setCurrentView('playlist');

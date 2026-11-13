@@ -42,6 +42,7 @@ import {
   ingestSpotflowTracks,
   resolveSpotflowEndpoint,
 } from './api/_lib/spotflow';
+import { fetchSpotifyCollectionMetadata } from './api/_lib/spotifyAlbum';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -553,6 +554,27 @@ async function startServer() {
     res.status(201).json({ count: addedTracks.length, tracks: addedTracks });
   });
 
+  app.post('/api/tracks/spotify-album', async (req, res) => {
+    try {
+      const rawUrl = String(req.body?.url || req.body?.spotifyUrl || '').trim();
+      if (!rawUrl) {
+        return res.status(400).json({
+          error: 'Vui lòng nhập đường dẫn (link) Album hoặc Playlist từ Spotify.',
+        });
+      }
+      const collection = await fetchSpotifyCollectionMetadata(rawUrl);
+      res.json(collection);
+    } catch (err) {
+      console.error('Error parsing Spotify album/playlist:', err);
+      res.status(400).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Không thể lấy thông tin Album từ Spotify.',
+      });
+    }
+  });
+
   app.post('/api/tracks/play', async (req, res) => {
     try {
       const trackId = String(req.body?.trackId || req.body?.id || '').trim();
@@ -895,6 +917,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: false,
+        ws: false,
         watch: null,
       },
       appType: 'spa',

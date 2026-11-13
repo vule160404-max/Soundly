@@ -60,7 +60,7 @@ export const AddToAlbumModal: React.FC = () => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-to-album-title"
-      className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop"
+      className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop soundly-modal-safe"
       onClick={closeAlbumPicker}
     >
       <div
@@ -100,9 +100,9 @@ export const AddToAlbumModal: React.FC = () => {
               type="button"
               onClick={closeAlbumPicker}
               aria-label="Đóng hộp thoại"
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors shrink-0"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] border border-white/10 text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/10 active:scale-95 transition-all shrink-0"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 

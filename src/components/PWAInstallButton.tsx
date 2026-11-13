@@ -31,9 +31,9 @@ export const PWAInstallButton: React.FC = () => {
         type="button"
         onClick={handleClick}
         title="Cài đặt Soundly lên màn hình chính"
-        className="min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#141d3d] hover:bg-[#1a254d] text-[#f7f5f0] border border-[#222f5e] hover:border-[#f47b64]/50 transition-colors shrink-0 whitespace-nowrap"
+        className="min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-0 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#141d3d] hover:bg-[#1a254d] active:scale-95 text-[#f7f5f0] border border-[#222f5e] hover:border-[#f47b64]/50 transition-all shrink-0 whitespace-nowrap touch-manipulation"
       >
-        <Download className="w-3.5 h-3.5 text-[#f47b64]" />
+        <Download className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-[#f47b64]" />
         <span className="hidden sm:inline">Thêm vào MH chính</span>
       </button>
 
@@ -42,7 +42,7 @@ export const PWAInstallButton: React.FC = () => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="pwa-safari-title"
-          className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop"
+          className="fixed inset-0 z-50 bg-[#040714]/78 backdrop-blur-md flex items-end sm:items-center justify-center p-3 sm:p-4 soundly-backdrop soundly-modal-safe"
           onClick={() => setShowSafariGuide(false)}
         >
           <div
@@ -72,9 +72,9 @@ export const PWAInstallButton: React.FC = () => {
                   type="button"
                   onClick={() => setShowSafariGuide(false)}
                   aria-label="Đóng hộp thoại"
-                  className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.06] transition-colors shrink-0"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/[0.05] text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-white/[0.1] transition-colors shrink-0 touch-manipulation"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 

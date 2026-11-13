@@ -26,12 +26,12 @@ export const QueueDrawer: React.FC = () => {
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: '100%', opacity: 0.4 }}
           transition={{ type: 'spring', stiffness: 360, damping: 34 }}
-          className="fixed inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] w-full md:w-[420px] bg-[#0d142c] backdrop-blur-xl md:border-l md:border-[#222f5e] shadow-2xl z-50 flex flex-col text-[#f7f5f0]"
+          className="fixed inset-0 md:inset-auto md:right-0 md:top-0 md:bottom-[88px] w-full md:w-[420px] bg-[#0d142c] backdrop-blur-xl md:border-l md:border-[#222f5e] shadow-2xl z-50 flex flex-col text-[#f7f5f0] soundly-overlay-top-safe soundly-bottom-safe"
         >
       {/* Header */}
-      <div className="p-4 px-6 border-b border-[#1e2a54] flex items-center justify-between">
+      <div className="p-4 px-5 border-b border-[#1e2a54] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center">
+          <div className="w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shrink-0">
             <ListMusic className="w-4 h-4 fill-[#070b1a]" />
           </div>
           <div>
@@ -47,7 +47,7 @@ export const QueueDrawer: React.FC = () => {
             <button
               onClick={clearQueue}
               title="Xóa danh sách chờ"
-              className="text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] px-2.5 py-1.5 rounded-full hover:bg-[#162047] transition-colors"
+              className="min-h-[40px] text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] px-3 py-1.5 rounded-xl bg-[#141d3d] hover:bg-[#162047] border border-[#222f5e] transition-colors"
             >
               Xóa sạch
             </button>
@@ -56,7 +56,8 @@ export const QueueDrawer: React.FC = () => {
           <button
             onClick={() => setIsQueueOpen(false)}
             title="Đóng hàng đợi"
-            className="p-1.5 rounded-full text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#162047] transition-colors"
+            aria-label="Đóng hàng đợi"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-[#162047] border border-[#2b3b75] text-[#f7f5f0] hover:bg-[#1f2c5c] active:scale-95 transition-all"
           >
             <X className="w-5 h-5" />
           </button>

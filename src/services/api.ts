@@ -27,6 +27,26 @@ export interface AIClassifyResult {
   reason: string;
 }
 
+export interface SpotifyParsedTrackItem {
+  spotifyTrackId: string;
+  spotifyUrl: string;
+  title: string;
+  artist: string;
+  duration: number;
+  previewUrl?: string;
+}
+
+export interface SpotifyParsedCollection {
+  spotifyId: string;
+  spotifyType: 'album' | 'playlist' | 'track';
+  spotifyUrl: string;
+  title: string;
+  artist: string;
+  coverUrl: string;
+  releaseYear?: number;
+  tracks: SpotifyParsedTrackItem[];
+}
+
 function isJsonResponse(res: Response): boolean {
   const ct = res.headers.get('content-type') || '';
   return ct.includes('application/json');
@@ -420,6 +440,7 @@ export const musicApi = {
 
     // 2. Save to Firestore (Guarantees Vercel & cross-device persistence)
     for (const track of newTracks) {
+      if (!track.audioUrl || !track.audioUrl.trim()) continue;
       try {
         await setDoc(doc(db, 'soundly_tracks', track.id), sanitizeTrackForFirestore(track));
       } catch (err) {
@@ -439,6 +460,27 @@ export const musicApi = {
     }
 
     return newTracks;
+  },
+
+  async parseSpotifyAlbumUrl(url: string): Promise<SpotifyParsedCollection> {
+    const res = await fetch('/api/tracks/spotify-album', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url.trim() }),
+    });
+
+    if (!isJsonResponse(res)) {
+      throw new Error(`Máy chủ chưa sẵn sàng phản hồi (HTTP ${res.status}).`);
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(
+        data.error || 'Không thể đọc thông tin Album/Playlist từ đường dẫn Spotify này.'
+      );
+    }
+
+    return data as SpotifyParsedCollection;
   },
 
   async updateTrack(id: string, updates: Partial<Track>): Promise<Track | null> {

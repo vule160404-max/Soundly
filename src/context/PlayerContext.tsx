@@ -56,7 +56,15 @@ interface PlayerContextType {
   toggleLike: (trackId: string) => void;
   isLiked: (trackId: string) => boolean;
   userPlaylists: Playlist[];
-  createPlaylist: (title: string, description?: string, initialTrack?: Track) => Playlist;
+  createPlaylist: (
+    title: string,
+    description?: string,
+    initialTrack?: Track,
+    options?: {
+      trackIds?: string[];
+      coverUrl?: string;
+    }
+  ) => Playlist;
   addTrackToPlaylist: (playlistId: string, trackId: string, trackCoverUrl?: string) => void;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => void;
   toggleTrackInPlaylist: (playlistId: string, track: Track) => boolean;
@@ -68,6 +76,8 @@ interface PlayerContextType {
   closeAlbumPicker: () => void;
   isCreateAlbumModalOpen: boolean;
   setIsCreateAlbumModalOpen: (open: boolean) => void;
+  createAlbumModalInitialMode: 'manual' | 'spotify';
+  openCreateAlbumModal: (mode?: 'manual' | 'spotify') => void;
   confirmDialog: ConfirmDialogOptions | null;
   openConfirmDialog: (options: ConfirmDialogOptions) => void;
   closeConfirmDialog: () => void;
@@ -182,7 +192,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Album & Confirm Modals
   const [albumPickerTrack, setAlbumPickerTrack] = useState<Track | null>(null);
   const [isCreateAlbumModalOpen, setIsCreateAlbumModalOpen] = useState<boolean>(false);
+  const [createAlbumModalInitialMode, setCreateAlbumModalInitialMode] = useState<'manual' | 'spotify'>('spotify');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogOptions | null>(null);
+
+  const openCreateAlbumModal = useCallback((mode: 'manual' | 'spotify' = 'spotify') => {
+    setCreateAlbumModalInitialMode(mode);
+    setIsCreateAlbumModalOpen(true);
+  }, []);
 
   // Sleep Timer
   const [sleepTimerEndTime, setSleepTimerEndTime] = useState<number | null>(null);
@@ -738,14 +754,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const createPlaylist = (
     title: string,
     description?: string,
-    initialTrack?: Track
+    initialTrack?: Track,
+    options?: {
+      trackIds?: string[];
+      coverUrl?: string;
+    }
   ): Playlist => {
+    const resolvedTrackIds =
+      Array.isArray(options?.trackIds) && options.trackIds.length > 0
+        ? Array.from(new Set(options.trackIds))
+        : initialTrack
+          ? [initialTrack.id]
+          : [];
     const newPl: Playlist = {
       id: sanitizePlaylistId(`album-${Date.now()}`),
       title: title.trim() || 'Album của tôi',
       description: description?.trim() || 'Album cá nhân trong thư viện Soundly',
-      coverUrl: initialTrack?.coverUrl || DEFAULT_CUSTOM_ALBUM_COVER,
-      trackIds: initialTrack ? [initialTrack.id] : [],
+      coverUrl:
+        options?.coverUrl?.trim() ||
+        initialTrack?.coverUrl ||
+        DEFAULT_CUSTOM_ALBUM_COVER,
+      trackIds: resolvedTrackIds,
       isCustom: true,
       createdAt: new Date().toLocaleDateString('vi-VN'),
     };
@@ -869,6 +898,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         closeAlbumPicker,
         isCreateAlbumModalOpen,
         setIsCreateAlbumModalOpen,
+        createAlbumModalInitialMode,
+        openCreateAlbumModal,
         confirmDialog,
         openConfirmDialog,
         closeConfirmDialog,
