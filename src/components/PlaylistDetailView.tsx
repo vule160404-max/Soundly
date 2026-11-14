@@ -57,8 +57,11 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   const handleShufflePlay = () => {
     if (playlistTracks.length === 0) return;
     if (!isShuffle) toggleShuffle();
-    const randomIdx = Math.floor(Math.random() * playlistTracks.length);
-    playTrack(playlistTracks[randomIdx], playlistTracks);
+    const isPlayingThisPlaylist = currentTrack && playlistTracks.some(t => t.id === currentTrack.id);
+    if (!isPlayingThisPlaylist) {
+      const randomIdx = Math.floor(Math.random() * playlistTracks.length);
+      playTrack(playlistTracks[randomIdx], playlistTracks);
+    }
   };
 
   const handleDelete = () => {

@@ -72,8 +72,11 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const handleShufflePlay = () => {
     if (artist.tracks.length === 0) return;
     if (!isShuffle) toggleShuffle();
-    const randomIdx = Math.floor(Math.random() * artist.tracks.length);
-    playTrack(artist.tracks[randomIdx], artist.tracks);
+    const isPlayingThisArtist = currentTrack && artist.tracks.some(t => t.id === currentTrack.id);
+    if (!isPlayingThisArtist) {
+      const randomIdx = Math.floor(Math.random() * artist.tracks.length);
+      playTrack(artist.tracks[randomIdx], artist.tracks);
+    }
   };
 
   const handleQueueAll = () => {

@@ -709,10 +709,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const playRandomShuffle = useCallback((allTracks: Track[]) => {
     if (!allTracks || allTracks.length === 0) return;
-    const shuffled = [...allTracks].sort(() => Math.random() - 0.5);
     setIsShuffle(true);
-    playTrack(shuffled[0], shuffled);
-  }, [playTrack]);
+    const isPlayingAnyOfThese = currentTrack && allTracks.some(t => t.id === currentTrack.id);
+    if (!isPlayingAnyOfThese) {
+      const randomIdx = Math.floor(Math.random() * allTracks.length);
+      playTrack(allTracks[randomIdx], allTracks);
+    }
+  }, [currentTrack, playTrack]);
 
   // Media Session API for Lock Screen & Notification Center controls
   useEffect(() => {
