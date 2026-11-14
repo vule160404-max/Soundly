@@ -142,6 +142,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const streamFallbackTriedRef = useRef<boolean>(false);
   const lastRecordedPlayRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
   const handleTrackEndRef = useRef<() => void>(() => {});
+  const shufflePlayedIndicesRef = useRef<Set<number>>(new Set());
 
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -519,16 +520,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
       const idx = newQueue.findIndex((t) => t.id === track.id);
-      setQueueIndex(idx !== -1 ? idx : 0);
+      const safeIdx = idx !== -1 ? idx : 0;
+      setQueueIndex(safeIdx);
+      shufflePlayedIndicesRef.current.clear();
+      shufflePlayedIndicesRef.current.add(safeIdx);
     } else {
       setQueue((prev) => {
-        if (prev.length === 0) return [track];
+        if (prev.length === 0) {
+          shufflePlayedIndicesRef.current.clear();
+          shufflePlayedIndicesRef.current.add(0);
+          return [track];
+        }
         const idx = prev.findIndex((t) => t.id === track.id);
         if (idx !== -1) {
           setQueueIndex(idx);
+          shufflePlayedIndicesRef.current.add(idx);
           return prev;
         }
-        return [track, ...prev];
+        const updated = [track, ...prev];
+        setQueueIndex(0);
+        shufflePlayedIndicesRef.current.add(0);
+        return updated;
       });
     }
 
@@ -649,7 +661,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const toggleShuffle = () => {
-    setIsShuffle((prev) => !prev);
+    setIsShuffle((prev) => {
+      const next = !prev;
+      if (next) {
+        shufflePlayedIndicesRef.current.clear();
+        shufflePlayedIndicesRef.current.add(queueIndex);
+      }
+      return next;
+    });
   };
 
   const cycleRepeatMode = () => {
@@ -668,11 +687,18 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (queue.length === 0) return;
 
     if (isShuffle) {
-      const availableIndices = queue.map((_, i) => i).filter((i) => i !== queueIndex);
+      shufflePlayedIndicesRef.current.add(queueIndex);
+      let unplayedIndices = queue.map((_, i) => i).filter((i) => !shufflePlayedIndicesRef.current.has(i));
+      if (unplayedIndices.length === 0) {
+        shufflePlayedIndicesRef.current.clear();
+        shufflePlayedIndicesRef.current.add(queueIndex);
+        unplayedIndices = queue.map((_, i) => i).filter((i) => !shufflePlayedIndicesRef.current.has(i));
+      }
       const nextIdx =
-        availableIndices.length > 0
-          ? availableIndices[Math.floor(Math.random() * availableIndices.length)]
-          : 0;
+        unplayedIndices.length > 0
+          ? unplayedIndices[Math.floor(Math.random() * unplayedIndices.length)]
+          : (queueIndex + 1) % queue.length;
+      shufflePlayedIndicesRef.current.add(nextIdx);
       setQueueIndex(nextIdx);
       playTrack(queue[nextIdx], queue);
       return;

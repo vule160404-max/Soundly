@@ -86,11 +86,24 @@ interface ClassifiedTrackResult {
   reason: string;
 }
 
+function humanizeSlug(slug: string): string {
+  if (!slug) return 'Bài hát không tên';
+  const cleaned = slug
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function fallbackClassify(items: ClassifyInputTrack[]): ClassifiedTrackResult[] {
   return items.map(item => {
     const rawName = item.fileName || item.title || 'Bài hát không tên';
     const clean = rawName.replace(/\.[^/.]+$/, '');
-    let artist = item.artist && item.artist !== 'Chờ AI nhận diện...' ? item.artist : 'Nghệ sĩ chưa rõ';
+    let artist = item.artist && item.artist !== 'Chờ AI nhận diện...' && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : '';
     let title = clean;
 
     if (clean.includes('-')) {
@@ -98,9 +111,16 @@ function fallbackClassify(items: ClassifyInputTrack[]): ClassifiedTrackResult[] 
       if (parts.length >= 2) {
         const potentialArtist = parts[0].replace(/^[0-9.\s]+/, '').trim();
         const potentialTitle = parts.slice(1).join('-').trim();
-        if (potentialArtist) artist = potentialArtist;
-        if (potentialTitle) title = potentialTitle;
+        if (!artist && potentialArtist) artist = humanizeSlug(potentialArtist);
+        if (potentialTitle) title = humanizeSlug(potentialTitle);
       }
+    } else {
+      title = humanizeSlug(clean);
+    }
+    if (!artist || artist === 'Nghệ sĩ chưa rõ') {
+      artist = 'Nghệ sĩ Việt Nam';
+    } else {
+      artist = humanizeSlug(artist);
     }
 
     const lower = (title + ' ' + artist).toLowerCase();
@@ -139,12 +159,29 @@ async function classifyBatchWithGemini(
   try {
     const allowedGenresList = SPOTIFY_GENRE_NAMES.join(', ');
 
-    const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI).
-Hãy phân tích danh sách bài hát bên dưới dựa trên ngữ nghĩa của tên bài hát, tên nghệ sĩ, tên tệp (fileName) và phong cách âm nhạc thực tế của nghệ sĩ đó. LƯU Ý QUAN TRỌNG: Không bao giờ đánh giá thể loại chỉ dựa vào nhịp độ BPM. Phải phân tích toàn diện qua ý nghĩa ca từ ẩn sau tiêu đề, phong cách dòng nhạc của nghệ sĩ (ví dụ: Ballad/Nhạc suy, Lo-Fi/Chill, Rap/Hip-Hop, Indie, Pop, v.v.).
+    const processedItems = items.map(item => {
+      const cleanTitle = item.title && item.title !== 'Bài hát không tên' ? item.title : humanizeSlug(item.fileName || '');
+      const artist = item.artist && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : '';
+      const searchQuery = artist ? `${artist} - ${cleanTitle}` : cleanTitle;
+      return {
+        id: item.id,
+        searchQuery,
+        artistHint: artist,
+        album: item.album || '',
+      };
+    });
 
-LƯU Ý KỸ THUẬT:
-- Định dạng tên file thường là "Nghệ sĩ - Tên bài hát". Phải tách đúng: suggestedArtist là Nghệ sĩ, suggestedTitle là Tên bài hát.
-- Nếu tên file chỉ có 1 vế, hãy suy luận chính xác nghệ sĩ và tên bài hát.
+    const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI).
+Hãy phân tích danh sách bài hát bên dưới dựa trên 'searchQuery' (câu truy vấn tên bài hát đã được làm sạch khoảng trắng/ký tự) và 'artistHint' (gợi ý nghệ sĩ nếu có) bằng cách BẮT BUỘC sử dụng công cụ Google Search Grounding để tìm kiếm searchQuery trên Google, nhằm xác định chính xác:
+- Tên bài hát gốc chuẩn có dấu (suggestedTitle).
+- Tên nghệ sĩ chính xác (suggestedArtist).
+- Thể loại chuẩn (genre) trong danh sách cho phép.
+- Tâm trạng (mood), nhịp độ (bpm), và lý do (reason).
+
+LƯU Ý KỸ THUẬT QUAN TRỌNG:
+- searchQuery có thể được chuyển từ slug file (ví dụ: "buitruonglinh tung buoc cham 100 buoc"). Hãy dùng Google Search với searchQuery này để tìm ra tên bài hát tiếng Việt chuẩn có dấu (ví dụ: "Từng Bước Chậm 100 Bước").
+- suggestedArtist: Tên nghệ sĩ chuẩn có dấu, viết hoa đúng.
+- suggestedTitle: Tên bài hát sạch đẹp, chuẩn có dấu (khôi phục đầy đủ dấu tiếng Việt, loại bỏ ký tự rác như [Official MV], (320kbps), .mp3).
 
 DANH SÁCH THỂ LOẠI CHUẨN BẮT BUỘC (chỉ chọn 1 trong các giá trị sau cho trường genre):
 [${allowedGenresList}]
@@ -152,14 +189,14 @@ DANH SÁCH THỂ LOẠI CHUẨN BẮT BUỘC (chỉ chọn 1 trong các giá tr�
 Yêu cầu cho từng bài hát:
 1. "id": Giữ nguyên id gốc của bài hát.
 2. "genre": Chọn chính xác 1 thể loại phù hợp nhất dựa trên kiến thức âm nhạc về nghệ sĩ và tên bài.
-3. "suggestedArtist": Tên nghệ sĩ/tác giả chuẩn.
-4. "suggestedTitle": Tên bài hát sạch đẹp (loại bỏ ký tự rác như [Official MV], (320kbps), .mp3).
+3. "suggestedArtist": Tên nghệ sĩ chuẩn có dấu.
+4. "suggestedTitle": Tên bài hát sạch đẹp, chuẩn có dấu.
 5. "mood": Tâm trạng thực tế bằng tiếng Việt (ví dụ: "Nhạc suy & Buồn", "Thư giãn & Chill", "Vui vẻ & Yêu đời", "Lãng mạn", "Sôi động").
 6. "bpm": Ước lượng nhịp BPM phù hợp (60-180).
 7. "reason": Giải thích ngắn gọn 1 câu bằng tiếng Việt lý do đánh giá thể loại và tâm trạng đó dựa trên tên bài và nghệ sĩ.
 
 Danh sách bài hát cần phân loại:
-${JSON.stringify(items, null, 2)}`;
+${JSON.stringify(processedItems, null, 2)}`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',

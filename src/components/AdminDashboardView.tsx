@@ -671,57 +671,60 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
   };
 
-  // Re-classify existing tracks in catalog using AI
+  // Re-classify existing tracks in catalog using AI in batches
   const handleReclassifyCatalogWithAI = async () => {
     if (tracks.length === 0) return;
     setIsReclassifyingCatalog(true);
     setAiError(null);
 
     try {
-      const results = await musicApi.classifyTracksWithAI(
-        tracks.map(t => ({
-          id: t.id,
-          title: t.title,
-          artist: t.artist,
-          album: t.album,
-          duration: t.duration,
-        }))
-      );
+      const chunkSize = 40;
+      let allUpdatedTracks = [...tracks];
 
-      const map = new Map(results.map(r => [r.id, r]));
-      const updated = await Promise.all(
-        tracks.map(async track => {
-          const ai = map.get(track.id);
-          if (!ai) return track;
-          const isUnaccentedTitle =
-            !/[^\u0000-\u007f]/.test(track.title) &&
-            track.title === track.title.toLowerCase();
-          const isUnaccentedArtist =
-            track.artist === 'Nghệ sĩ chưa rõ' ||
-            (!/[^\u0000-\u007f]/.test(track.artist) &&
-              track.artist === track.artist.toLowerCase());
-          const patch: Partial<Track> = {
-            ...(isUnaccentedTitle && ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
-            ...(isUnaccentedArtist && ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
-            genre: ai.genre,
-            mood: ai.mood,
-            bpm: ai.bpm,
-            aiClassified: true,
-            aiReason: ai.reason,
-          };
-          await musicApi.updateTrack(track.id, patch);
-          return { ...track, ...patch };
-        })
-      );
+      for (let i = 0; i < tracks.length; i += chunkSize) {
+        const chunk = tracks.slice(i, i + chunkSize);
+        setUploadProgressText(`Đang phân loại batch ${Math.floor(i / chunkSize) + 1}/${Math.ceil(tracks.length / chunkSize)}...`);
 
-      onTracksUpdated(updated);
-      setUploadSuccessToast(`AI đã khôi phục tên có dấu & phân loại lại toàn bộ ${updated.length} bài hát!`);
+        const results = await musicApi.classifyTracksWithAI(
+          chunk.map(t => ({
+            id: t.id,
+            title: t.title,
+            artist: t.artist,
+            album: t.album,
+            duration: t.duration,
+          }))
+        );
+
+        const map = new Map(results.map(r => [r.id, r]));
+        allUpdatedTracks = await Promise.all(
+          allUpdatedTracks.map(async track => {
+            const ai = map.get(track.id);
+            if (!ai) return track;
+
+            const patch: Partial<Track> = {
+              ...(ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
+              ...(ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
+              genre: ai.genre,
+              mood: ai.mood,
+              bpm: ai.bpm,
+              aiClassified: true,
+              aiReason: ai.reason,
+            };
+            await musicApi.updateTrack(track.id, patch);
+            return { ...track, ...patch };
+          })
+        );
+      }
+
+      onTracksUpdated(allUpdatedTracks);
+      setUploadSuccessToast(`AI đã phân loại và làm sạch thành công toàn bộ ${tracks.length} bài hát!`);
       setTimeout(() => setUploadSuccessToast(null), 4000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Lỗi khi phân loại lại kho nhạc bằng AI.';
       setAiError(msg);
     } finally {
       setIsReclassifyingCatalog(false);
+      setUploadProgressText(null);
     }
   };
 
