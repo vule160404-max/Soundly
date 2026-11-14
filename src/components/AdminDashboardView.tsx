@@ -21,6 +21,7 @@ import {
   Key,
   ExternalLink,
   Pencil,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
@@ -147,6 +148,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isReclassifyingCatalog, setIsReclassifyingCatalog] = useState<boolean>(false);
   const [autoSkipDuplicates, setAutoSkipDuplicates] = useState<boolean>(true);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [adminTrackSearch, setAdminTrackSearch] = useState<string>('');
+
+  const filteredAdminTracks = tracks.filter(t => {
+    if (!adminTrackSearch.trim()) return true;
+    const q = adminTrackSearch.toLowerCase().trim();
+    return (
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      (t.album && t.album.toLowerCase().includes(q)) ||
+      t.genre.toLowerCase().includes(q)
+    );
+  });
 
   const [editingTrack, setEditingTrack] = useState<Track | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -1765,25 +1778,71 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </div>
 
           {expiredSourceTracks.length > 0 && (
-            <div className="mb-4 p-3.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-amber-100">
-                  Có {expiredSourceTracks.length} bài hát đang dùng link tạm từ SpotFlow/Render (không phát được nếu server Render đã xóa file)
-                </p>
-                <p className="text-[11px] text-amber-200/90 mt-0.5">
-                  Chỉ các bài có nhãn xanh lá hoặc không có cảnh báo mới đã được lưu cố định trên Cloudflare R2. Bạn có thể đồng bộ lại SpotFlow hoặc xóa bài lỗi và tải lên file MP3 trực tiếp.
-                </p>
+            <div className="mb-4 p-3.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-xs text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-amber-100">
+                    Cảnh báo: Có {expiredSourceTracks.length} bài hát đang gặp vấn đề (link SpotFlow/Render hết hạn, không phát được nhạc)
+                  </p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5">
+                    Hãy rà soát các bài có nhãn &quot;Chưa lưu R2&quot;, cập nhật hoặc xóa bỏ để người dùng không gặp lỗi phát nhạc.
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const expiredIds = expiredSourceTracks.map(t => t.id);
+                  openConfirmDialog({
+                    title: 'Xóa toàn bộ bài hát lỗi',
+                    description: `Bạn có muốn xóa ${expiredIds.length} bài hát đang gặp lỗi không phát được nhạc khỏi kho?`,
+                    confirmLabel: 'Xóa bài lỗi',
+                    tone: 'danger',
+                    onConfirm: async () => {
+                      for (const id of expiredIds) {
+                        await musicApi.deleteTrack(id);
+                      }
+                      onTracksUpdated(tracks.filter(t => !expiredIds.includes(t.id)));
+                    },
+                  });
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold shrink-0 transition-colors"
+              >
+                Xóa nhanh {expiredSourceTracks.length} bài lỗi
+              </button>
             </div>
           )}
 
-          {tracks.length === 0 ? (
+          {/* Search Bar for Tracks */}
+          <div className="mb-4">
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8d99be]" />
+              <input
+                type="text"
+                value={adminTrackSearch}
+                onChange={(e) => setAdminTrackSearch(e.target.value)}
+                placeholder="Tìm kiếm theo tên bài hát, nghệ sĩ, album, thể loại..."
+                className="w-full bg-[#0d142c] border border-[#222f5e] rounded-xl pl-10 pr-4 py-2.5 text-xs text-[#f7f5f0] placeholder-[#6e7ba8] focus:outline-none focus:border-[#f47b64]"
+              />
+              {adminTrackSearch && (
+                <button
+                  type="button"
+                  onClick={() => setAdminTrackSearch('')}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8d99be] hover:text-[#f7f5f0] text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {filteredAdminTracks.length === 0 ? (
             <div className="py-12 text-center text-[#a3aed0]">
               <Music className="w-10 h-10 mx-auto mb-2 text-[#f47b64]/45" />
-              <p className="text-sm font-bold text-[#f7f5f0]">Chưa có bài hát nào trong kho</p>
+              <p className="text-sm font-bold text-[#f7f5f0]">Không tìm thấy bài hát phù hợp</p>
               <p className="text-xs text-[#8d99be] mt-1">
-                Chuyển sang tab &quot;Tải nhạc hàng loạt&quot; để tải lên các tệp âm thanh từ thiết bị.
+                Thử tìm kiếm với từ khóa khác hoặc xóa bộ lọc tìm kiếm.
               </p>
             </div>
           ) : (
@@ -1793,12 +1852,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-[#f7f5f0]">
                   <input
                     type="checkbox"
-                    checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
-                    onChange={handleToggleSelectAll}
+                    checked={filteredAdminTracks.length > 0 && selectedTrackIds.length === filteredAdminTracks.length}
+                    onChange={() => {
+                      if (selectedTrackIds.length === filteredAdminTracks.length) {
+                        setSelectedTrackIds([]);
+                      } else {
+                        setSelectedTrackIds(filteredAdminTracks.map(t => t.id));
+                      }
+                    }}
                     className="w-4 h-4 rounded text-[#f47b64] accent-[#f47b64]"
                   />
                   <span>
-                    Chọn tất cả ({selectedTrackIds.length}/{tracks.length} bài đã chọn)
+                    Chọn tất cả hiển thị ({selectedTrackIds.length}/{filteredAdminTracks.length} bài)
                   </span>
                 </label>
 
@@ -1815,7 +1880,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
 
               <div className="divide-y divide-[#1e2a54]">
-                {tracks.map((t, idx) => {
+                {filteredAdminTracks.map((t, idx) => {
                   const isCurrent = currentTrack?.id === t.id;
                   const isThisPlaying = isCurrent && isPlaying;
                   const hasExpiredUrl = isExpiredExternalTrack(t.audioUrl);
