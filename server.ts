@@ -140,22 +140,23 @@ async function classifyBatchWithGemini(
     const allowedGenresList = SPOTIFY_GENRE_NAMES.join(', ');
 
     const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI).
-Hãy phân tích danh sách bài hát bên dưới dựa trên tên tệp (fileName), tiêu đề hiện tại và nghệ sĩ để phân loại chính xác thể loại nhạc và tách chuẩn xác tên tác giả/nghệ sĩ và tên bài hát.
-LƯU Ý QUAN TRỌNG:
-- Định dạng tên file thường là "Nghệ sĩ - Tên bài hát". Phải tách đúng: suggestedArtist là Nghệ sĩ, suggestedTitle là Tên bài hát (không được nhầm lẫn ngược lại).
-- Nếu tên file chỉ có 1 vế, hãy phân tích kỹ để gán đúng nghệ sĩ và tên bài hát.
+Hãy phân tích danh sách bài hát bên dưới dựa trên ngữ nghĩa của tên bài hát, tên nghệ sĩ, tên tệp (fileName) và phong cách âm nhạc thực tế của nghệ sĩ đó. LƯU Ý QUAN TRỌNG: Không bao giờ đánh giá thể loại chỉ dựa vào nhịp độ BPM. Phải phân tích toàn diện qua ý nghĩa ca từ ẩn sau tiêu đề, phong cách dòng nhạc của nghệ sĩ (ví dụ: Ballad/Nhạc suy, Lo-Fi/Chill, Rap/Hip-Hop, Indie, Pop, v.v.).
+
+LƯU Ý KỸ THUẬT:
+- Định dạng tên file thường là "Nghệ sĩ - Tên bài hát". Phải tách đúng: suggestedArtist là Nghệ sĩ, suggestedTitle là Tên bài hát.
+- Nếu tên file chỉ có 1 vế, hãy suy luận chính xác nghệ sĩ và tên bài hát.
 
 DANH SÁCH THỂ LOẠI CHUẨN BẮT BUỘC (chỉ chọn 1 trong các giá trị sau cho trường genre):
 [${allowedGenresList}]
 
 Yêu cầu cho từng bài hát:
 1. "id": Giữ nguyên id gốc của bài hát.
-2. "genre": Chọn chính xác 1 thể loại phù hợp nhất trong danh sách ở trên.
-3. "suggestedArtist": Tên nghệ sĩ/tác giả (trích xuất chuẩn từ tên file hoặc tiêu đề).
-4. "suggestedTitle": Tên bài hát sạch đẹp (loại bỏ tên nghệ sĩ, ký tự rác như [Official MV], (320kbps), .mp3).
-5. "mood": Tâm trạng ngắn gọn bằng tiếng Việt (ví dụ: "Sôi động", "Sâu lắng", "Thư giãn", "Lãng mạn").
-6. "bpm": Ước lượng nhịp BPM (số nguyên từ 60 đến 180).
-7. "reason": Giải thích ngắn gọn 1 câu bằng tiếng Việt lý do chọn thể loại này.
+2. "genre": Chọn chính xác 1 thể loại phù hợp nhất dựa trên kiến thức âm nhạc về nghệ sĩ và tên bài.
+3. "suggestedArtist": Tên nghệ sĩ/tác giả chuẩn.
+4. "suggestedTitle": Tên bài hát sạch đẹp (loại bỏ ký tự rác như [Official MV], (320kbps), .mp3).
+5. "mood": Tâm trạng thực tế bằng tiếng Việt (ví dụ: "Nhạc suy & Buồn", "Thư giãn & Chill", "Vui vẻ & Yêu đời", "Lãng mạn", "Sôi động").
+6. "bpm": Ước lượng nhịp BPM phù hợp (60-180).
+7. "reason": Giải thích ngắn gọn 1 câu bằng tiếng Việt lý do đánh giá thể loại và tâm trạng đó dựa trên tên bài và nghệ sĩ.
 
 Danh sách bài hát cần phân loại:
 ${JSON.stringify(items, null, 2)}`;
@@ -165,7 +166,8 @@ ${JSON.stringify(items, null, 2)}`;
       contents: prompt,
       config: {
         systemInstruction:
-          'You are a precise Spotify music genre classifier and metadata parser. Always return valid JSON matching the schema and strictly pick genres from the provided allowlist.',
+          'You are an expert music curator and metadata parser with real-time Google Search grounding. You MUST use Google Search to search for the song title and artist on Google whenever needed to verify the exact music genre, album, and background before classifying. Always return valid JSON matching the schema and strictly pick genres from the provided allowlist.',
+        tools: [{ googleSearch: {} }],
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.ARRAY,
