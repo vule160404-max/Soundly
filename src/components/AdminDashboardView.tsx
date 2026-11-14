@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   ShieldCheck,
   Users,
@@ -137,6 +137,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
   const expiredSourceTracks = tracks.filter(t => isExpiredExternalTrack(t.audioUrl));
 
+  const isNameErrorTrack = (t: Track) => {
+    const title = (t.title || '').trim();
+    const artist = (t.artist || '').trim();
+    const isUnaccentedLowerTitle = !/[^\u0000-\u007f]/.test(title) && title === title.toLowerCase();
+    const isPlaceholderArtist =
+      artist === 'Nghệ sĩ chưa rõ' ||
+      artist === 'nghe si chua ro' ||
+      (!/[^\u0000-\u007f]/.test(artist) && artist === artist.toLowerCase());
+    const hasSlugUnderscore = title.includes('_') || artist.includes('_');
+    return isUnaccentedLowerTitle || isPlaceholderArtist || hasSlugUnderscore;
+  };
+
   // Batch upload state (FILES ONLY, NO URLS!)
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [isClassifyingAI, setIsClassifyingAI] = useState<boolean>(false);
@@ -149,17 +161,52 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [autoSkipDuplicates, setAutoSkipDuplicates] = useState<boolean>(true);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [adminTrackSearch, setAdminTrackSearch] = useState<string>('');
+  const [trackFilterMode, setTrackFilterMode] = useState<'all' | 'audio_error' | 'name_error' | 'recent'>('all');
+  const [adminVisibleCount, setAdminVisibleCount] = useState<number>(100);
+  const adminLoadMoreRef = React.useRef<HTMLDivElement>(null);
 
-  const filteredAdminTracks = tracks.filter(t => {
-    if (!adminTrackSearch.trim()) return true;
-    const q = adminTrackSearch.toLowerCase().trim();
-    return (
-      t.title.toLowerCase().includes(q) ||
-      t.artist.toLowerCase().includes(q) ||
-      (t.album && t.album.toLowerCase().includes(q)) ||
-      t.genre.toLowerCase().includes(q)
+  const filteredAdminTracks = useMemo(() => {
+    let list = [...tracks].reverse(); // Newest first by default
+    if (adminTrackSearch.trim()) {
+      const q = adminTrackSearch.toLowerCase().trim();
+      list = list.filter(
+        t =>
+          t.title.toLowerCase().includes(q) ||
+          t.artist.toLowerCase().includes(q) ||
+          (t.album && t.album.toLowerCase().includes(q)) ||
+          t.genre.toLowerCase().includes(q)
+      );
+    }
+    if (trackFilterMode === 'audio_error') {
+      list = list.filter(t => isExpiredExternalTrack(t.audioUrl) || !t.audioUrl);
+    } else if (trackFilterMode === 'name_error') {
+      list = list.filter(t => isNameErrorTrack(t));
+    } else if (trackFilterMode === 'recent') {
+      // already reversed (newest first)
+    }
+    return list;
+  }, [tracks, adminTrackSearch, trackFilterMode]);
+
+  const visibleAdminTracks = useMemo(
+    () => filteredAdminTracks.slice(0, adminVisibleCount),
+    [filteredAdminTracks, adminVisibleCount]
+  );
+
+  useEffect(() => {
+    if (adminVisibleCount >= filteredAdminTracks.length) return;
+    const target = adminLoadMoreRef.current;
+    if (!target || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(e => e.isIntersecting)) {
+          setAdminVisibleCount(prev => Math.min(filteredAdminTracks.length, prev + 100));
+        }
+      },
+      { rootMargin: '600px 0px' }
     );
-  });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [adminVisibleCount, filteredAdminTracks.length]);
 
   const [editingTrack, setEditingTrack] = useState<Track | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -1814,14 +1861,67 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             </div>
           )}
 
-          {/* Search Bar for Tracks */}
-          <div className="mb-4">
+          {/* Filter Chips & Search Bar */}
+          <div className="space-y-3 mb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setTrackFilterMode('all'); setAdminVisibleCount(100); }}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
+                  trackFilterMode === 'all'
+                    ? 'bg-[#f47b64] text-[#070b1a]'
+                    : 'bg-[#0d142c] text-[#a3aed0] hover:text-[#f7f5f0] border border-[#222f5e]'
+                }`}
+              >
+                Tất cả ({tracks.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrackFilterMode('audio_error'); setAdminVisibleCount(100); }}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  trackFilterMode === 'audio_error'
+                    ? 'bg-amber-500 text-[#070b1a]'
+                    : 'bg-[#0d142c] text-amber-300 hover:text-amber-200 border border-amber-500/40'
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>Lỗi nhạc ({tracks.filter((t: Track) => isExpiredExternalTrack(t.audioUrl) || !t.audioUrl).length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrackFilterMode('name_error'); setAdminVisibleCount(100); }}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  trackFilterMode === 'name_error'
+                    ? 'bg-rose-500 text-[#070b1a]'
+                    : 'bg-[#0d142c] text-rose-300 hover:text-rose-200 border border-rose-500/40'
+                }`}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Lỗi tên ({tracks.filter((t: Track) => isNameErrorTrack(t)).length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrackFilterMode('recent'); setAdminVisibleCount(100); }}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  trackFilterMode === 'recent'
+                    ? 'bg-[#f47b64] text-[#070b1a]'
+                    : 'bg-[#0d142c] text-[#a3aed0] hover:text-[#f7f5f0] border border-[#222f5e]'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Mới cập nhật (100 mới nhất)</span>
+              </button>
+            </div>
+
             <div className="relative">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8d99be]" />
               <input
                 type="text"
                 value={adminTrackSearch}
-                onChange={(e) => setAdminTrackSearch(e.target.value)}
+                onChange={(e) => {
+                  setAdminTrackSearch(e.target.value);
+                  setAdminVisibleCount(100);
+                }}
                 placeholder="Tìm kiếm theo tên bài hát, nghệ sĩ, album, thể loại..."
                 className="w-full bg-[#0d142c] border border-[#222f5e] rounded-xl pl-10 pr-4 py-2.5 text-xs text-[#f7f5f0] placeholder-[#6e7ba8] focus:outline-none focus:border-[#f47b64]"
               />
@@ -1857,7 +1957,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       if (selectedTrackIds.length === filteredAdminTracks.length) {
                         setSelectedTrackIds([]);
                       } else {
-                        setSelectedTrackIds(filteredAdminTracks.map(t => t.id));
+                        setSelectedTrackIds(filteredAdminTracks.map((t: Track) => t.id));
                       }
                     }}
                     className="w-4 h-4 rounded text-[#f47b64] accent-[#f47b64]"
@@ -1880,7 +1980,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
 
               <div className="divide-y divide-[#1e2a54]">
-                {filteredAdminTracks.map((t, idx) => {
+                {visibleAdminTracks.map((t, idx) => {
                   const isCurrent = currentTrack?.id === t.id;
                   const isThisPlaying = isCurrent && isPlaying;
                   const hasExpiredUrl = isExpiredExternalTrack(t.audioUrl);
@@ -1970,6 +2070,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   );
                 })}
               </div>
+
+              {adminVisibleCount < filteredAdminTracks.length && (
+                <div ref={adminLoadMoreRef} className="py-4 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setAdminVisibleCount(prev => Math.min(filteredAdminTracks.length, prev + 100))}
+                    className="px-4 py-2 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0] transition-colors"
+                  >
+                    Hiển thị thêm ({filteredAdminTracks.length - adminVisibleCount} bài tiếp theo)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
