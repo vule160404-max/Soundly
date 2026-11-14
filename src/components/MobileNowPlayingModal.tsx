@@ -23,14 +23,12 @@ import { findActiveLyricIndex, getTrackSyncedLines } from '../utils/lyricsSync';
 interface MobileNowPlayingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenSleepTimer: () => void;
   onSelectArtistByName?: (artistName: string) => void;
 }
 
 export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
   isOpen,
   onClose,
-  onOpenSleepTimer,
   onSelectArtistByName
 }) => {
   const {
@@ -307,21 +305,6 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                     title="Bài tiếp theo"
                   >
                     <SkipForward className="w-8 h-8 fill-white" />
-                  </button>
-
-                  {/* Sleep Timer Button */}
-                  <button
-                    type="button"
-                    onClick={onOpenSleepTimer}
-                    className={`min-h-[44px] min-w-[44px] flex items-center justify-center relative transition-colors ${
-                      sleepTimerRemaining ? 'text-[#1ed760]' : 'text-white/80 hover:text-white'
-                    }`}
-                    title="Hẹn giờ tắt nhạc"
-                  >
-                    <Timer className="w-6 h-6" />
-                    {sleepTimerRemaining && (
-                      <span className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-[#1ed760]" />
-                    )}
                   </button>
                 </div>
 

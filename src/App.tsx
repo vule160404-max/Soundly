@@ -407,7 +407,6 @@ const MainContent: React.FC = () => {
       <MobileNowPlayingModal
         isOpen={isMobileNowPlayingOpen}
         onClose={() => setIsMobileNowPlayingOpen(false)}
-        onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
         onSelectArtistByName={handleSelectArtistByName}
       />
 
