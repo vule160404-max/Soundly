@@ -34,6 +34,12 @@ export default defineConfig(() => {
           categories: ['music', 'entertainment'],
           icons: [
             {
+              src: '/assets/aistudio/Logo_Soundly__2__5c576ab3.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+              purpose: 'any maskable',
+            },
+            {
               src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
