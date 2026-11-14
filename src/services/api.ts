@@ -202,6 +202,13 @@ function normalizePlayableUrl(url?: string): string {
   return url;
 }
 
+function normalizeTrackCover(url?: string): string {
+  if (!url || url.includes('photo-1511671782779-c97d3d27a1d4')) {
+    return '/assets/aistudio/soundly-default-cover.svg';
+  }
+  return normalizePlayableUrl(url);
+}
+
 export const musicApi = {
   async getTracks(search?: string, genre?: string): Promise<Track[]> {
     let allTracks: Track[] = [...INITIAL_TRACKS];
@@ -212,7 +219,7 @@ export const musicApi = {
         const t = healTrackVietnameseDisplay({
           ...rawTrack,
           audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
-          coverUrl: normalizePlayableUrl(rawTrack.coverUrl),
+          coverUrl: normalizeTrackCover(rawTrack.coverUrl),
         });
         const existingIdx = allTracks.findIndex(existing =>
           areTracksDuplicate(existing, t)
@@ -248,7 +255,7 @@ export const musicApi = {
               freshMap.set(data.id, healTrackVietnameseDisplay({
                 ...data,
                 audioUrl: normalizePlayableUrl(data.audioUrl),
-                coverUrl: normalizePlayableUrl(data.coverUrl),
+                coverUrl: normalizeTrackCover(data.coverUrl),
               }));
               hasNew = true;
             }
@@ -261,7 +268,7 @@ export const musicApi = {
               freshMap.set(t.id, healTrackVietnameseDisplay({
                 ...t,
                 audioUrl: normalizePlayableUrl(t.audioUrl),
-                coverUrl: normalizePlayableUrl(t.coverUrl),
+                coverUrl: normalizeTrackCover(t.coverUrl),
               }));
               hasNew = true;
             }
