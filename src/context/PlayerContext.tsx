@@ -6,8 +6,7 @@ import { useAuth } from './AuthContext';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { musicApi } from '../services/api';
 
-export const DEFAULT_CUSTOM_ALBUM_COVER =
-  'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
+export const DEFAULT_CUSTOM_ALBUM_COVER = '/assets/aistudio/soundly-default-cover.svg';
 
 export interface ConfirmDialogOptions {
   title: string;

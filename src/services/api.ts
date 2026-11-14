@@ -441,7 +441,7 @@ export const musicApi = {
         audioUrl: t.audioUrl,
         coverUrl:
           t.coverUrl ||
-          'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+          '/assets/aistudio/soundly-default-cover.svg',
         duration: t.duration || 210,
         genre: t.genre || 'Pop',
         releaseYear: new Date().getFullYear(),
