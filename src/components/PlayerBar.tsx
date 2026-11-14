@@ -96,7 +96,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ type: 'spring', stiffness: 360, damping: 32 }}
             onClick={onOpenMobileNowPlaying}
-            className="fixed bottom-[68px] soundly-mini-player-safe left-2 right-2 z-40 bg-[#141d3d] rounded-xl border border-[#2b3b75] shadow-xl md:hidden flex flex-col overflow-hidden select-none cursor-pointer active:scale-[0.98] transition-transform duration-150"
+            className="fixed bottom-[68px] soundly-mini-player-safe left-2 right-2 z-40 bg-[#141d3d] rounded-xl border border-[#2b3b75] shadow-xl md:hidden flex flex-col overflow-hidden select-none cursor-pointer active:scale-[0.98] transition-transform duration-150 soundly-gpu-bar"
           >
           <div className="flex items-center justify-between p-2 pl-2.5 gap-3 h-14">
             {/* Artwork & Info */}

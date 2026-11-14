@@ -31,14 +31,14 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { musicApi } from './services/api';
 import { Track, Playlist, GenreCategory, ArtistProfile } from './types/music';
-import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from './data/mockTracks';
+import { INITIAL_PLAYLISTS, INITIAL_GENRES } from './data/mockTracks';
 import {
   buildArtistDirectory,
   findArtistByNameOrId,
   matchesTrackSearch,
 } from './utils/artistSync';
 import { deduplicateTracksList } from './utils/trackDedupe';
-import { Loader2 } from 'lucide-react';
+import { MobileLoadingScreen } from './components/MobileLoadingScreen';
 
 const MainContent: React.FC = () => {
   const { user, isAdmin, isLoading: isAuthLoading } = useAuth();
@@ -57,30 +57,91 @@ const MainContent: React.FC = () => {
   const touchStartYRef = useRef<number>(0);
   const touchEndXRef = useRef<number>(0);
   const touchEndYRef = useRef<number>(0);
+  const touchIgnoredRef = useRef<boolean>(false);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.targetTouches[0].clientX;
-    touchStartYRef.current = e.targetTouches[0].clientY;
-    touchEndXRef.current = e.targetTouches[0].clientX;
-    touchEndYRef.current = e.targetTouches[0].clientY;
+  const isTouchInsideHorizontalScrollOrInput = (target: EventTarget | null, boundary: HTMLElement | null) => {
+    let el = target as HTMLElement | null;
+    while (el && el !== boundary) {
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.dataset?.noSwipe === 'true') {
+        return true;
+      }
+      if (el.scrollWidth > el.clientWidth + 6) {
+        const overflowX = window.getComputedStyle(el).overflowX;
+        if (overflowX === 'auto' || overflowX === 'scroll') {
+          return true;
+        }
+      }
+      el = el.parentElement;
+    }
+    return false;
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    touchEndXRef.current = e.targetTouches[0].clientX;
-    touchEndYRef.current = e.targetTouches[0].clientY;
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) {
+      touchIgnoredRef.current = true;
+      return;
+    }
+    if (isTouchInsideHorizontalScrollOrInput(e.target, e.currentTarget)) {
+      touchIgnoredRef.current = true;
+      return;
+    }
+    touchIgnoredRef.current = false;
+    const touch = e.touches[0];
+    touchStartXRef.current = touch.clientX;
+    touchStartYRef.current = touch.clientY;
+    touchEndXRef.current = touch.clientX;
+    touchEndYRef.current = touch.clientY;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (touchIgnoredRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    touchEndXRef.current = touch.clientX;
+    touchEndYRef.current = touch.clientY;
   };
 
   const handleTouchEnd = () => {
+    if (touchIgnoredRef.current) {
+      touchIgnoredRef.current = false;
+      return;
+    }
+
     const diffX = touchStartXRef.current - touchEndXRef.current;
     const diffY = touchStartYRef.current - touchEndYRef.current;
+    const absX = Math.abs(diffX);
+    const absY = Math.abs(diffY);
 
-    // Ignore if vertical scroll is dominant
-    if (Math.abs(diffY) > Math.abs(diffX) * 1.3) return;
+    // Strictly ignore vertical scrolling or diagonal scroll gestures
+    if (absX < 72 || absY > 60 || absX < absY * 1.65) return;
 
-    const threshold = 70;
-    if (Math.abs(diffX) < threshold) return;
+    // Exact left-to-right order matching MobileBottomNav
+    const tabs = ['home', 'artists', 'explore', ...(isAdmin ? ['admin'] : ['liked'])];
 
-    const tabs = ['home', 'explore', 'artists', 'liked', 'history', ...(isAdmin ? ['admin'] : [])];
+    if (currentView === 'artist-detail') {
+      if (diffX < 0) {
+        // Swiped right -> go back to Artists list
+        setCurrentView('artists');
+        setSelectedArtistId(null);
+      } else {
+        // Swiped left -> advance to Explore
+        setCurrentView('explore');
+        setSelectedArtistId(null);
+      }
+      return;
+    }
+
+    if (currentView === 'playlist' && diffX < 0) {
+      setCurrentView('home');
+      setSelectedPlaylistId(null);
+      return;
+    }
+
+    if (currentView === 'history' && diffX < 0) {
+      setCurrentView('liked');
+      return;
+    }
+
     const currentIndex = tabs.indexOf(currentView);
     if (currentIndex === -1) return;
 
@@ -101,27 +162,35 @@ const MainContent: React.FC = () => {
     }
   };
 
-  // Full synchronized catalog state
-  const [allTracks, setAllTracks] = useState<Track[]>(INITIAL_TRACKS);
-  const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
-  const [genres, setGenres] = useState<GenreCategory[]>(INITIAL_GENRES);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  // Full synchronized catalog state (hydrate synchronously from cache so mobile renders immediately when cached)
+  const initialCachedTracks = useMemo(() => musicApi.getInitialCachedTracks(), []);
+  const [allTracks, setAllTracks] = useState<Track[]>(initialCachedTracks);
+  const [playlists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
+  const [genres] = useState<GenreCategory[]>(INITIAL_GENRES);
+  const [isCatalogSyncing, setIsCatalogSyncing] = useState<boolean>(
+    initialCachedTracks.length === 0
+  );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch complete music catalog on sign-in (instant initial render, background sync)
+  // Fetch complete music catalog on sign-in (progressive background sync + clean mobile loading state)
   useEffect(() => {
     if (!user) return;
 
     let isMounted = true;
+    const safetyTimer = window.setTimeout(() => {
+      if (isMounted) setIsCatalogSyncing(false);
+    }, 6500);
 
     async function loadData() {
       try {
         const fetchedTracks = await musicApi.getTracks();
         if (isMounted && fetchedTracks && fetchedTracks.length > 0) {
           setAllTracks(fetchedTracks);
+          setIsCatalogSyncing(false);
         }
       } catch (err) {
         console.warn('Could not fetch from backend API, using initial catalog:', err);
+        if (isMounted) setIsCatalogSyncing(false);
       }
     }
 
@@ -131,14 +200,22 @@ const MainContent: React.FC = () => {
       const detail = (e as CustomEvent<{ tracks?: Track[] }>).detail;
       if (isMounted && detail?.tracks && detail.tracks.length > 0) {
         setAllTracks(detail.tracks);
+        setIsCatalogSyncing(false);
       }
     };
 
+    const handleSyncFinished = () => {
+      if (isMounted) setIsCatalogSyncing(false);
+    };
+
     window.addEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
+    window.addEventListener('soundly:catalog-sync-finished', handleSyncFinished);
 
     return () => {
       isMounted = false;
+      window.clearTimeout(safetyTimer);
       window.removeEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
+      window.removeEventListener('soundly:catalog-sync-finished', handleSyncFinished);
     };
   }, [user]);
 
@@ -178,7 +255,7 @@ const MainContent: React.FC = () => {
   const viewKey = `${currentView}:${selectedPlaylistId || ''}:${selectedArtistId || ''}`;
 
   useEffect(() => {
-    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [viewKey]);
 
   // Real-time synchronized Artist Directory (splits multi-artist strings & updates live)
@@ -231,24 +308,18 @@ const MainContent: React.FC = () => {
 
   // 1. Loading Authentication State Splash Screen
   if (isAuthLoading) {
-    return (
-      <div className="h-screen w-screen bg-[#070b1a] flex flex-col items-center justify-center text-[#f7f5f0] select-none">
-        <div className="w-16 h-16 rounded-2xl overflow-hidden bg-[#f7f5f0] mb-4 shadow-2xl shadow-[#f47b64]/20 ring-2 ring-[#f47b64]/40">
-          <img
-            src="/assets/aistudio/Logo_Soundly__2__5c576ab3.svg"
-            alt="Soundly Logo"
-            className="w-full h-full object-cover"
-          />
-        </div>
-        <p className="text-sm font-bold text-[#a3aed0] tracking-wide">Đang kết nối Soundly...</p>
-      </div>
-    );
+    return <MobileLoadingScreen variant="splash" message="Đang kết nối Soundly..." />;
   }
 
   // 2. Authentication Gate: Must be logged in with Google Mail to enter the app
   if (!user) {
     return <LoginGate />;
   }
+
+  const showInitialCatalogLoader =
+    isCatalogSyncing &&
+    allTracks.length === 0 &&
+    (currentView === 'home' || currentView === 'explore' || currentView === 'artists');
 
   // 3. Authenticated App Experience
   return (
@@ -288,21 +359,17 @@ const MainContent: React.FC = () => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28 touch-pan-y"
+          className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6 pb-36 md:pb-28 touch-pan-y soundly-scroll-viewport"
         >
-          {isLoading ? (
-            <div className="flex items-center justify-center h-64 text-[#f47b64] gap-2">
-              <Loader2 className="w-6 h-6 animate-spin" />
-              <span className="text-sm font-semibold">Đang nạp kho nhạc Soundly...</span>
-            </div>
+          {showInitialCatalogLoader ? (
+            <MobileLoadingScreen variant="catalog" message="Đang tải kho nhạc Soundly..." />
           ) : (
-            <AnimatePresence mode="wait" initial={false}>
+            <AnimatePresence initial={false}>
               <motion.div
                 key={viewKey}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0.72, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
               >
                 {currentView === 'home' ? (
                   <HomeView

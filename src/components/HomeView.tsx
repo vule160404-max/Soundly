@@ -142,7 +142,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <div
                     key={track.id}
                     onClick={() => playTrack(track, tracks)}
-                    className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer overflow-hidden ${
+                    className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer overflow-hidden ${
                       isCurrent ? 'bg-[#1c2852] border-[#f47b64]/45' : ''
                     }`}
                   >
@@ -150,6 +150,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       <img
                         src={track.coverUrl}
                         alt={track.title}
+                        loading="lazy"
+                        decoding="async"
                         referrerPolicy="no-referrer"
                         className="w-14 h-14 object-cover shrink-0 shadow-md"
                       />
@@ -243,7 +245,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           onSelectArtist(artist);
                         }
                       }}
-                      className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col items-center text-center"
+                      className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col items-center text-center"
                     >
                       <div className="relative w-24 h-24 sm:w-28 sm:h-28">
                         <ArtistAvatar
@@ -329,14 +331,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   onClick={() => onSelectPlaylist(vibe)}
                   role="button"
                   tabIndex={0}
-                  className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between"
+                  className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col justify-between"
                 >
                   <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 shadow-md bg-[#0d142c]">
                     <img
                       src={vibe.coverUrl}
                       alt={vibe.title}
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2.5">
                       <span className="text-[11px] font-bold text-white bg-[#f47b64] px-2 py-0.5 rounded-full">
@@ -391,13 +395,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <div
                     key={pl.id}
                     onClick={() => onSelectPlaylist(pl)}
-                    className="group p-3 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between"
+                    className="group p-3 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col justify-between"
                   >
                     <div>
                       <div className="relative aspect-square rounded-lg overflow-hidden mb-2.5 shadow-md bg-[#162047]">
                         <img
                           src={pl.coverUrl}
                           alt={pl.title}
+                          loading="lazy"
+                          decoding="async"
                           referrerPolicy="no-referrer"
                           className="w-full h-full object-cover"
                         />
@@ -502,13 +508,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div
                 key={pl.id}
                 onClick={() => onSelectPlaylist(pl)}
-                className="group p-4 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col justify-between relative"
+                className="group p-4 bg-[#141d3d] hover:bg-[#1c2852] border border-[#1e2a54] rounded-xl md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col justify-between relative"
               >
                 <div>
                   <div className="relative aspect-square rounded-lg overflow-hidden mb-3.5 shadow-lg">
                     <img
                       src={pl.coverUrl}
                       alt={pl.title}
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />

@@ -51,6 +51,8 @@ export const ArtistAvatar: React.FC<ArtistAvatarProps> = ({
         <img
           src={artist.avatarUrl}
           alt={artist.name}
+          loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
           className="w-full h-full object-cover"

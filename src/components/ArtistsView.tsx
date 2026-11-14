@@ -183,7 +183,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({
                     onSelectArtist(artist);
                   }
                 }}
-                className={`group p-3.5 sm:p-4 rounded-2xl border hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f47b64] ${
+                className={`soundly-track-row group p-3.5 sm:p-4 rounded-2xl border md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f47b64] ${
                   isArtistActive
                     ? 'bg-[#1a254d] border-[#f47b64]/45'
                     : 'bg-[#121a3a]/80 hover:bg-[#19244f] border-[#1e2a54]'

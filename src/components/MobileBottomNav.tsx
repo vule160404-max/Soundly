@@ -50,7 +50,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   };
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#070b1a]/95 backdrop-blur-md border-t border-[#1e2a54] min-h-16 flex items-center justify-around px-1 md:hidden select-none shadow-2xl soundly-bottom-nav-safe">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#070b1a]/95 backdrop-blur-md border-t border-[#1e2a54] min-h-16 flex items-center justify-around px-1 md:hidden select-none shadow-2xl soundly-bottom-nav-safe soundly-gpu-bar">
       {tabs.map(tab => {
         const Icon = tab.icon;
         const isActive =

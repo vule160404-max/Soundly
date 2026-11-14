@@ -105,7 +105,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                     onSelectArtist(artist);
                   }
                 }}
-                className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 ease-out cursor-pointer flex flex-col items-center text-center"
+                className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col items-center text-center"
               >
                 <ArtistAvatar
                   artist={artist}
@@ -130,10 +130,10 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         {/* All Tab */}
         <button
           onClick={() => setActiveGenre('all')}
-          className={`p-4 rounded-xl text-left active:scale-[0.97] transition-all duration-200 ease-out flex flex-col justify-between h-28 sm:h-32 relative overflow-hidden group shadow-md ${
+          className={`p-4 rounded-xl text-left transition-colors duration-150 flex flex-col justify-between h-28 sm:h-32 relative overflow-hidden group shadow-md ${
             activeGenre === 'all'
               ? 'bg-[#f47b64] text-[#070b1a] ring-2 ring-[#f7f5f0]'
-              : 'bg-[#141d3d] border border-[#222f5e] text-[#f7f5f0] hover:scale-[1.02]'
+              : 'bg-[#141d3d] border border-[#222f5e] text-[#f7f5f0] md:hover:scale-[1.02]'
           }`}
         >
           <span className="text-base font-bold tracking-tight">Tất cả bài hát</span>
@@ -152,8 +152,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
             <button
               key={genre.id}
               onClick={() => setActiveGenre(genre.name)}
-              className={`p-4 rounded-xl text-left active:scale-[0.97] transition-all duration-200 ease-out flex flex-col justify-between h-28 sm:h-32 relative overflow-hidden group shadow-md ${bgClass} text-[#f7f5f0] ${
-                isSelected ? 'ring-2 ring-[#f47b64] scale-[1.02]' : 'hover:scale-[1.02]'
+              className={`p-4 rounded-xl text-left transition-colors duration-150 flex flex-col justify-between h-28 sm:h-32 relative overflow-hidden group shadow-md ${bgClass} text-[#f7f5f0] ${
+                isSelected ? 'ring-2 ring-[#f47b64]' : 'md:hover:scale-[1.02]'
               }`}
             >
               <span className="text-base font-bold tracking-tight leading-snug pr-4">

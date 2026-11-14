@@ -3,7 +3,6 @@ import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from '../data/mockT
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import {
-  areTracksDuplicate,
   deduplicateTracksList,
   healTrackVietnameseDisplay,
   mergeDuplicateTrackPair,
@@ -209,89 +208,113 @@ function normalizeTrackCover(url?: string): string {
   return normalizePlayableUrl(url);
 }
 
+function buildHydratedTrackList(rawTracks: Track[]): Track[] {
+  const normalized: Track[] = [];
+  for (const rawTrack of rawTracks) {
+    if (!rawTrack || !rawTrack.id) continue;
+    normalized.push(
+      healTrackVietnameseDisplay({
+        ...rawTrack,
+        audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
+        coverUrl: normalizeTrackCover(rawTrack.coverUrl),
+      })
+    );
+  }
+  const { deduped } = deduplicateTracksList(normalized);
+  const localPlays = getLocalPlayCounts();
+  return deduped.map(t => ({
+    ...t,
+    plays: Math.max(Number(t.plays) || 0, Number(localPlays[t.id]) || 0),
+  }));
+}
+
 export const musicApi = {
-  async getTracks(search?: string, genre?: string): Promise<Track[]> {
-    let allTracks: Track[] = [...INITIAL_TRACKS];
-
-    const mergeTracks = (incoming: Track[]) => {
-      for (const rawTrack of incoming) {
-        if (!rawTrack || !rawTrack.id) continue;
-        const t = healTrackVietnameseDisplay({
-          ...rawTrack,
-          audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
-          coverUrl: normalizeTrackCover(rawTrack.coverUrl),
-        });
-        const existingIdx = allTracks.findIndex(existing =>
-          areTracksDuplicate(existing, t)
-        );
-        if (existingIdx !== -1) {
-          allTracks[existingIdx] = mergeDuplicateTrackPair(allTracks[existingIdx], t);
-          continue;
-        }
-        allTracks.unshift(t);
-      }
-    };
-
-    // 1. Load from localStorage backup + INITIAL_TRACKS instantly (no waiting)
+  getInitialCachedTracks(): Track[] {
+    if (typeof window === 'undefined') return [...INITIAL_TRACKS];
     const localTracks = getLocalCustomTracks();
-    if (localTracks.length > 0) {
-      mergeTracks(localTracks);
-    }
+    return buildHydratedTrackList([...localTracks, ...INITIAL_TRACKS]);
+  },
 
-    // 2. Fetch from Firestore & R2 API in the background so app loads instantly, then updates state smoothly
+  async getTracks(search?: string, genre?: string): Promise<Track[]> {
+    let allTracks: Track[] = buildHydratedTrackList([
+      ...getLocalCustomTracks(),
+      ...INITIAL_TRACKS,
+    ]);
+
+    // Fetch from Firestore & R2 API progressively in the background (whichever finishes first updates UI immediately)
     if (typeof window !== 'undefined') {
-      Promise.all([
-        getDocs(collection(db, 'soundly_tracks')).catch(() => null),
-        fetch('/api/tracks').then(res => (res.ok && isJsonResponse(res) ? res.json() : null)).catch(() => null),
-      ]).then(([fsSnap, apiTracks]) => {
-        let hasNew = false;
-        const freshMap = new Map<string, Track>();
-        for (const t of allTracks) freshMap.set(t.id, t);
+      const freshMap = new Map<string, Track>();
+      for (const t of allTracks) freshMap.set(t.id, t);
 
-        if (fsSnap) {
-          fsSnap.forEach(d => {
-            const data = d.data() as Track;
-            if (data && data.id && !freshMap.has(data.id)) {
-              freshMap.set(data.id, healTrackVietnameseDisplay({
-                ...data,
-                audioUrl: normalizePlayableUrl(data.audioUrl),
-                coverUrl: normalizeTrackCover(data.coverUrl),
-              }));
-              hasNew = true;
-            }
+      const mergeAndNotify = (incoming: Track[]) => {
+        let changed = false;
+        for (const rawTrack of incoming) {
+          if (!rawTrack || !rawTrack.id) continue;
+          const normalized = healTrackVietnameseDisplay({
+            ...rawTrack,
+            audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
+            coverUrl: normalizeTrackCover(rawTrack.coverUrl),
           });
-        }
-
-        if (Array.isArray(apiTracks)) {
-          for (const t of apiTracks) {
-            if (t && t.id && !freshMap.has(t.id)) {
-              freshMap.set(t.id, healTrackVietnameseDisplay({
-                ...t,
-                audioUrl: normalizePlayableUrl(t.audioUrl),
-                coverUrl: normalizeTrackCover(t.coverUrl),
-              }));
-              hasNew = true;
+          const existing = freshMap.get(normalized.id);
+          if (!existing) {
+            freshMap.set(normalized.id, normalized);
+            changed = true;
+          } else {
+            const merged = mergeDuplicateTrackPair(existing, normalized);
+            if (
+              merged.title !== existing.title ||
+              merged.artist !== existing.artist ||
+              merged.album !== existing.album ||
+              merged.coverUrl !== existing.coverUrl ||
+              merged.audioUrl !== existing.audioUrl ||
+              (Number(merged.plays) || 0) !== (Number(existing.plays) || 0)
+            ) {
+              freshMap.set(normalized.id, merged);
+              changed = true;
             }
           }
         }
 
-        if (hasNew) {
+        if (changed) {
+          const syncedList = buildHydratedTrackList(Array.from(freshMap.values()));
+          const customOnly = syncedList.filter(
+            t => !INITIAL_TRACKS.some(it => it.id === t.id)
+          );
+          if (customOnly.length > 0) {
+            saveLocalCustomTracks(customOnly);
+          }
           window.dispatchEvent(
             new CustomEvent('soundly:catalog-refreshed', {
-              detail: { tracks: Array.from(freshMap.values()) },
+              detail: { tracks: syncedList },
             })
           );
         }
-      }).catch(() => {});
-    }
+      };
 
-    // Final deduplication pass & merge locally persisted play counts
-    const { deduped } = deduplicateTracksList(allTracks);
-    const localPlays = getLocalPlayCounts();
-    allTracks = deduped.map(t => ({
-      ...t,
-      plays: Math.max(Number(t.plays) || 0, Number(localPlays[t.id]) || 0),
-    }));
+      const fsPromise = getDocs(collection(db, 'soundly_tracks'))
+        .then(fsSnap => {
+          const fsTracks: Track[] = [];
+          fsSnap.forEach(d => {
+            const data = d.data() as Track;
+            if (data && data.id) fsTracks.push(data);
+          });
+          if (fsTracks.length > 0) mergeAndNotify(fsTracks);
+        })
+        .catch(() => null);
+
+      const apiPromise = fetch('/api/tracks')
+        .then(res => (res.ok && isJsonResponse(res) ? res.json() : null))
+        .then(apiTracks => {
+          if (Array.isArray(apiTracks) && apiTracks.length > 0) {
+            mergeAndNotify(apiTracks);
+          }
+        })
+        .catch(() => null);
+
+      Promise.allSettled([fsPromise, apiPromise]).finally(() => {
+        window.dispatchEvent(new CustomEvent('soundly:catalog-sync-finished'));
+      });
+    }
 
     // Keep localStorage synced when custom tracks are updated
     const customOnly = allTracks.filter(

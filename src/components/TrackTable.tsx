@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Play,
   Heart,
@@ -48,6 +48,41 @@ export const TrackTable: React.FC<TrackTableProps> = ({
 
   const [activeMenuTrackId, setActiveMenuTrackId] = useState<string | null>(null);
   const [addedPlaylistToast, setAddedPlaylistToast] = useState<string | null>(null);
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true
+  );
+  const [visibleCount, setVisibleCount] = useState<number>(40);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 768px)');
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    setIsDesktop(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    if (visibleCount >= tracks.length) return;
+    const target = loadMoreRef.current;
+    if (!target || typeof IntersectionObserver === 'undefined') {
+      setVisibleCount(tracks.length);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisibleCount((prev) => Math.min(tracks.length, prev + 40));
+        }
+      },
+      { rootMargin: '650px 0px' }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [visibleCount, tracks.length]);
+
+  const visibleTracks =
+    visibleCount >= tracks.length ? tracks : tracks.slice(0, visibleCount);
 
   const formatDuration = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return '0:00';
@@ -124,8 +159,9 @@ export const TrackTable: React.FC<TrackTableProps> = ({
       {/* ======================================================== */}
       {/* MOBILE LIST VIEW (Soundly Navy touch layout)             */}
       {/* ======================================================== */}
-      <div className="md:hidden divide-y divide-[#1e2a54]">
-        {tracks.map((track, idx) => {
+      {!isDesktop && (
+      <div className="divide-y divide-[#1e2a54]">
+        {visibleTracks.map((track, idx) => {
           const isCurrent = currentTrack?.id === track.id;
           const isCurrentPlaying = isCurrent && isPlaying;
           const liked = isLiked(track.id);
@@ -138,7 +174,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
             <div
               key={`mobile-${track.id}`}
               onClick={() => handleRowClick(track, idx)}
-              className={`flex items-center justify-between p-2.5 rounded-xl active:bg-[#1c2852] active:scale-[0.99] transition-all duration-150 ${
+              className={`soundly-track-row flex items-center justify-between p-2.5 rounded-xl active:bg-[#1c2852] transition-colors duration-100 ${
                 isCurrent ? 'bg-[#1c2852]/75' : ''
               }`}
             >
@@ -159,6 +195,8 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                   <img
                     src={track.coverUrl}
                     alt={track.title}
+                    loading="lazy"
+                    decoding="async"
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
@@ -307,11 +345,13 @@ export const TrackTable: React.FC<TrackTableProps> = ({
           );
         })}
       </div>
+      )}
 
       {/* ======================================================== */}
       {/* DESKTOP TABLE VIEW (Soundly Navy Desktop Rows)           */}
       {/* ======================================================== */}
-      <div className="hidden md:block">
+      {isDesktop && (
+      <div>
         {/* Table Header */}
         <div className="grid grid-cols-12 gap-3 px-4 py-2.5 text-[11px] font-semibold text-[#a3aed0] uppercase tracking-wider border-b border-[#1e2a54]">
           <div className="col-span-1 text-center">#</div>
@@ -326,7 +366,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
 
         {/* Table Rows */}
         <div className="mt-1">
-          {tracks.map((track, idx) => {
+          {visibleTracks.map((track, idx) => {
             const isCurrent = currentTrack?.id === track.id;
             const isCurrentPlaying = isCurrent && isPlaying;
             const liked = isLiked(track.id);
@@ -383,6 +423,8 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     <img
                       src={track.coverUrl}
                       alt={track.title}
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       className="w-10 h-10 rounded-md object-cover shrink-0 transition-transform duration-200 group-hover:scale-[1.03]"
                     />
@@ -569,6 +611,19 @@ export const TrackTable: React.FC<TrackTableProps> = ({
           })}
         </div>
       </div>
+      )}
+
+      {visibleCount < tracks.length && (
+        <div ref={loadMoreRef} className="py-4 text-center">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((prev) => Math.min(tracks.length, prev + 40))}
+            className="px-4 py-2 rounded-full bg-[#141d3d] hover:bg-[#1c2852] border border-[#222f5e] text-xs font-semibold text-[#a3aed0] hover:text-[#f7f5f0] transition-colors"
+          >
+            Hiển thị thêm ({tracks.length - visibleCount} bài hát)
+          </button>
+        </div>
+      )}
     </div>
   );
 };

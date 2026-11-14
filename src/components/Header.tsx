@@ -390,7 +390,7 @@ export const Header: React.FC<HeaderProps> = ({
   );
 
   return (
-    <header className="sticky top-0 z-30 bg-[#0d142c]/95 backdrop-blur-md border-b border-[#1e2a54] px-3.5 sm:px-4 md:px-6 pb-2.5 pt-2.5 md:py-3 soundly-header-safe flex flex-col gap-2.5 select-none text-[#f7f5f0]">
+    <header className="sticky top-0 z-30 bg-[#0d142c]/95 backdrop-blur-md border-b border-[#1e2a54] px-3.5 sm:px-4 md:px-6 pb-2.5 pt-2.5 md:py-3 soundly-header-safe soundly-gpu-bar flex flex-col gap-2.5 select-none text-[#f7f5f0]">
       {/* Mobile Top Row: Dedicated Easy-Reach Action Bar (Below iPhone Notch / Status Bar) */}
       <div className="flex md:hidden items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -592,6 +592,8 @@ export const Header: React.FC<HeaderProps> = ({
                                   <img
                                     src={track.coverUrl}
                                     alt={track.title}
+                                    loading="lazy"
+                                    decoding="async"
                                     referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover"
                                   />
