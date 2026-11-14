@@ -542,9 +542,27 @@ export function getSearchSuggestions(
     .slice(0, 6)
     .map(item => item.track);
 
-  const matchedGenres = SPOTIFY_GENRE_NAMES.filter(g =>
-    normalizeSearchText(g).includes(q)
-  ).slice(0, 2);
+  const US_UK_SEARCH_ALIASES = [
+    'us uk',
+    'usuk',
+    'us-uk',
+    'nhac nuoc ngoai',
+    'nuoc ngoai',
+    'nhac au my',
+    'au my',
+    'quoc te',
+    'nhac quoc te',
+    'nhac anh',
+    'english',
+  ];
+
+  const matchedGenres = SPOTIFY_GENRE_NAMES.filter(g => {
+    if (normalizeSearchText(g).includes(q)) return true;
+    if (g === 'US-UK' && q.length >= 2) {
+      return US_UK_SEARCH_ALIASES.some(alias => alias.includes(q) || q.includes(alias));
+    }
+    return false;
+  }).slice(0, 2);
 
   return {
     artists: scoredArtists,

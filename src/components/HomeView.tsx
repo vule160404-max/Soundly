@@ -1,14 +1,38 @@
 import React, { useMemo } from 'react';
-import { Play, Pause, Music2, Sparkles, Compass, FolderPlus, Check, Plus, Disc3, Mic2, ArrowRight, TrendingUp } from 'lucide-react';
+import {
+  Play,
+  Pause,
+  Music2,
+  Sparkles,
+  Compass,
+  FolderPlus,
+  Check,
+  Plus,
+  Disc3,
+  Mic2,
+  ArrowRight,
+  TrendingUp,
+  Globe,
+  Headphones,
+  Radio,
+} from 'lucide-react';
 import { Track, Playlist, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
 import { usePlayer, getAutoVibePlaylists } from '../context/PlayerContext';
+import { buildArtistDirectory } from '../utils/artistSync';
+import {
+  MUSIC_SPACES,
+  MusicSpaceId,
+  filterTracksBySpace,
+} from '../utils/musicSpaces';
 
 interface HomeViewProps {
   tracks: Track[];
   playlists: Playlist[];
   artists: ArtistProfile[];
+  activeSpace: MusicSpaceId;
+  onChangeSpace: (space: MusicSpaceId) => void;
   onSelectPlaylist: (playlist: Playlist) => void;
   onSelectArtist: (artist: ArtistProfile) => void;
   onSelectArtistByName: (artistName: string) => void;
@@ -20,6 +44,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   tracks,
   playlists,
   artists,
+  activeSpace,
+  onChangeSpace,
   onSelectPlaylist,
   onSelectArtist,
   onSelectArtistByName,
@@ -37,7 +63,44 @@ export const HomeView: React.FC<HomeViewProps> = ({
     playRandomShuffle,
   } = usePlayer();
 
-  const vibePlaylists = useMemo(() => getAutoVibePlaylists(tracks), [tracks]);
+  const spaceCounts = useMemo(() => {
+    const map: Record<MusicSpaceId, number> = {
+      all: tracks.length,
+      vn: filterTracksBySpace(tracks, 'vn').length,
+      'us-uk': filterTracksBySpace(tracks, 'us-uk').length,
+      kpop: filterTracksBySpace(tracks, 'kpop').length,
+      chill: filterTracksBySpace(tracks, 'chill').length,
+    };
+    return map;
+  }, [tracks]);
+
+  const spaceTracks = useMemo(
+    () => filterTracksBySpace(tracks, activeSpace),
+    [tracks, activeSpace]
+  );
+
+  const spaceArtists = useMemo(
+    () => (activeSpace === 'all' ? artists : buildArtistDirectory(spaceTracks)),
+    [activeSpace, artists, spaceTracks]
+  );
+
+  const vibePlaylists = useMemo(
+    () => getAutoVibePlaylists(spaceTracks, activeSpace),
+    [spaceTracks, activeSpace]
+  );
+
+  const currentSpaceMeta = useMemo(
+    () => MUSIC_SPACES.find(s => s.id === activeSpace) || MUSIC_SPACES[0],
+    [activeSpace]
+  );
+
+  const getSpaceIcon = (spaceId: MusicSpaceId) => {
+    if (spaceId === 'us-uk') return <Globe className="w-4 h-4 shrink-0" />;
+    if (spaceId === 'vn') return <Music2 className="w-4 h-4 shrink-0" />;
+    if (spaceId === 'kpop') return <Sparkles className="w-4 h-4 shrink-0" />;
+    if (spaceId === 'chill') return <Headphones className="w-4 h-4 shrink-0" />;
+    return <Radio className="w-4 h-4 shrink-0" />;
+  };
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -56,21 +119,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
         !url.includes('onrender.com')
       );
     };
-    const reliable = tracks.filter(isReliable);
-    const others = tracks.filter((t) => !isReliable(t));
+    const reliable = spaceTracks.filter(isReliable);
+    const others = spaceTracks.filter((t) => !isReliable(t));
     return [...reliable, ...others].slice(0, 6);
-  }, [tracks]);
+  }, [spaceTracks]);
 
   const top50Tracks = useMemo(
     () =>
-      [...tracks]
+      [...spaceTracks]
         .sort(
           (a, b) =>
             (Number(b.plays) || 0) - (Number(a.plays) || 0) ||
             a.title.localeCompare(b.title, 'vi')
         )
         .slice(0, 50),
-    [tracks]
+    [spaceTracks]
   );
 
   const handleQuickPlay = (track: Track, e: React.MouseEvent) => {
@@ -78,7 +141,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     if (currentTrack?.id === track.id) {
       togglePlay();
     } else {
-      playTrack(track, tracks);
+      playTrack(track, spaceTracks);
     }
   };
 
@@ -130,104 +193,236 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </section>
       ) : (
         <>
-          {/* Soundly 6-card Quick Picks Grid */}
-          <section>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
-              {quickPicks.map((track) => {
-                const isCurrent = currentTrack?.id === track.id;
-                const isThisPlaying = isCurrent && isPlaying;
-                const isInAlbum = userPlaylists.some((pl) => pl.trackIds.includes(track.id));
+          {/* Music Listening Spaces Selector */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-[#f47b64]" />
+                  <span>Không gian nghe nhạc</span>
+                </h3>
+                <p className="text-xs text-[#a3aed0] mt-0.5">
+                  Chuyển nhanh giữa không gian Nhạc Việt, US-UK quốc tế, K-Pop và Chill.
+                </p>
+              </div>
+              {activeSpace !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => onChangeSpace('all')}
+                  className="text-xs font-bold text-[#f47b64] hover:text-[#ff8d76] whitespace-nowrap shrink-0"
+                >
+                  Xem tất cả
+                </button>
+              )}
+            </div>
 
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3">
+              {MUSIC_SPACES.map((space) => {
+                const isActive = activeSpace === space.id;
+                const count = spaceCounts[space.id];
                 return (
-                  <div
-                    key={track.id}
-                    onClick={() => playTrack(track, tracks)}
-                    className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer overflow-hidden ${
-                      isCurrent ? 'bg-[#1c2852] border-[#f47b64]/45' : ''
+                  <button
+                    key={space.id}
+                    type="button"
+                    onClick={() => onChangeSpace(space.id)}
+                    className={`min-h-[76px] p-3.5 rounded-2xl text-left transition-all duration-150 border flex flex-col justify-between gap-2 touch-manipulation ${
+                      isActive
+                        ? `bg-gradient-to-br ${space.accentGradient} border-[#f47b64] ring-1 ring-[#f47b64]/60 shadow-lg`
+                        : 'bg-[#141d3d]/85 hover:bg-[#1c2852] border-[#1e2a54]'
                     }`}
                   >
-                    <div className="flex items-center gap-3.5 min-w-0 pr-2">
-                      <img
-                        src={track.coverUrl}
-                        alt={track.title}
-                        loading="lazy"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                        className="w-14 h-14 object-cover shrink-0 shadow-md"
-                      />
-                      <div className="min-w-0">
-                        <p
-                          className={`text-xs sm:text-sm font-bold truncate ${
-                            isCurrent ? 'text-[#f47b64]' : 'text-[#f7f5f0]'
-                          }`}
-                        >
-                          {track.title}
-                        </p>
-                        <p className="text-[11px] text-[#a3aed0] truncate mt-0.5">
-                          {track.artist}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 pr-2.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openAlbumPicker(track);
-                        }}
-                        title={isInAlbum ? 'Đã lưu trong album • Nhấn để quản lý' : 'Thêm vào album của bạn'}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors ${
-                          isInAlbum
-                            ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45'
-                            : 'bg-[#0d142c]/80 text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:border-[#f47b64]/50'
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <span
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                          isActive
+                            ? 'bg-[#f47b64] text-[#070b1a]'
+                            : 'bg-[#0d142c] text-[#f47b64] border border-[#222f5e]'
                         }`}
                       >
-                        {isInAlbum ? (
-                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                        ) : (
-                          <FolderPlus className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-
-                      <button
-                        onClick={(e) => handleQuickPlay(track, e)}
-                        title={isThisPlaying ? 'Tạm dừng' : 'Phát bài hát'}
-                        className={`w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shrink-0 shadow-xl hover:scale-105 active:scale-95 transition-all ${
-                          isThisPlaying
-                            ? 'opacity-100 scale-100'
-                            : 'opacity-90 sm:opacity-0 sm:translate-y-1 sm:group-hover:opacity-100 sm:group-hover:translate-y-0'
-                        }`}
-                      >
-                        <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
-                      </button>
+                        {getSpaceIcon(space.id)}
+                      </span>
+                      <span className="text-[11px] font-mono tabular-nums text-[#a3aed0]">
+                        {count} bài
+                      </span>
                     </div>
-                  </div>
+                    <div className="min-w-0">
+                      <p className="text-xs sm:text-sm font-bold text-[#f7f5f0] truncate">
+                        {space.shortTitle}
+                      </p>
+                      <p className="text-[11px] text-[#a3aed0] truncate mt-0.5">
+                        {space.subtitle}
+                      </p>
+                    </div>
+                  </button>
                 );
               })}
             </div>
+
+            {/* Active Space Banner when inside a dedicated space (e.g. US-UK) */}
+            {activeSpace !== 'all' && (
+              <div
+                className={`p-5 sm:p-6 rounded-2xl bg-gradient-to-r ${currentSpaceMeta.accentGradient} border border-[#2b3b75] flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl`}
+              >
+                <div className="space-y-1 min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#f47b64]">
+                    Đang nghe trong không gian
+                  </p>
+                  <h3 className="text-xl sm:text-2xl font-black text-[#f7f5f0] tracking-tight">
+                    {currentSpaceMeta.title}
+                  </h3>
+                  <p className="text-xs text-[#cbd5f5] max-w-2xl leading-relaxed">
+                    {currentSpaceMeta.description} ({spaceTracks.length} bài hát · {spaceArtists.length} nghệ sĩ)
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={spaceTracks.length === 0}
+                    onClick={() => {
+                      if (spaceTracks.length > 0) playTrack(spaceTracks[0], spaceTracks);
+                    }}
+                    className="min-h-[44px] px-5 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs flex items-center gap-2 shadow-lg active:scale-95 disabled:opacity-40 transition-all whitespace-nowrap"
+                  >
+                    <Play className="w-4 h-4 fill-[#070b1a]" />
+                    <span>Phát ngay</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={spaceTracks.length === 0}
+                    onClick={() => playRandomShuffle(spaceTracks)}
+                    className="min-h-[44px] px-4 py-2.5 rounded-full bg-[#0d142c]/80 hover:bg-[#162047] border border-[#2b3b75] text-[#f7f5f0] font-bold text-xs flex items-center gap-2 active:scale-95 disabled:opacity-40 transition-all whitespace-nowrap"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#f47b64]" />
+                    <span>Trộn ngẫu nhiên</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
+          {/* Soundly 6-card Quick Picks Grid */}
+          {quickPicks.length > 0 ? (
+            <section>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
+                {quickPicks.map((track) => {
+                  const isCurrent = currentTrack?.id === track.id;
+                  const isThisPlaying = isCurrent && isPlaying;
+                  const isInAlbum = userPlaylists.some((pl) => pl.trackIds.includes(track.id));
+
+                  return (
+                    <div
+                      key={track.id}
+                      onClick={() => playTrack(track, spaceTracks)}
+                      className={`group flex items-center justify-between rounded-lg bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer overflow-hidden ${
+                        isCurrent ? 'bg-[#1c2852] border-[#f47b64]/45' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0 pr-2">
+                        <img
+                          src={track.coverUrl}
+                          alt={track.title}
+                          loading="lazy"
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                          className="w-14 h-14 object-cover shrink-0 shadow-md"
+                        />
+                        <div className="min-w-0">
+                          <p
+                            className={`text-xs sm:text-sm font-bold truncate ${
+                              isCurrent ? 'text-[#f47b64]' : 'text-[#f7f5f0]'
+                            }`}
+                          >
+                            {track.title}
+                          </p>
+                          <p className="text-[11px] text-[#a3aed0] truncate mt-0.5">
+                            {track.artist}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 pr-2.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openAlbumPicker(track);
+                          }}
+                          title={isInAlbum ? 'Đã lưu trong album • Nhấn để quản lý' : 'Thêm vào album của bạn'}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors ${
+                            isInAlbum
+                              ? 'bg-[#f47b64]/15 text-[#f47b64] border-[#f47b64]/45'
+                              : 'bg-[#0d142c]/80 text-[#a3aed0] border-[#222f5e] hover:text-[#f7f5f0] hover:border-[#f47b64]/50'
+                          }`}
+                        >
+                          {isInAlbum ? (
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          ) : (
+                            <FolderPlus className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+
+                        <button
+                          onClick={(e) => handleQuickPlay(track, e)}
+                          title={isThisPlaying ? 'Tạm dừng' : 'Phát bài hát'}
+                          className={`w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shrink-0 shadow-xl hover:scale-105 active:scale-95 transition-all ${
+                            isThisPlaying
+                              ? 'opacity-100 scale-100'
+                              : 'opacity-90 sm:opacity-0 sm:translate-y-1 sm:group-hover:opacity-100 sm:group-hover:translate-y-0'
+                          }`}
+                        >
+                          <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : (
+            <section className="p-8 rounded-2xl bg-[#141d3d]/60 border border-[#1e2a54] text-center space-y-3">
+              <Globe className="w-8 h-8 text-[#f47b64]/60 mx-auto" />
+              <p className="text-sm font-bold text-[#f7f5f0]">
+                Chưa có bài hát nào trong {currentSpaceMeta.title}
+              </p>
+              <p className="text-xs text-[#a3aed0] max-w-md mx-auto">
+                Hãy tải thêm nhạc hoặc chạy AI Phân loại để tự động sắp xếp bài hát vào không gian này.
+              </p>
+              <button
+                type="button"
+                onClick={() => onChangeSpace('all')}
+                className="px-4 py-2 rounded-full bg-[#f47b64] text-[#070b1a] font-bold text-xs"
+              >
+                Quay lại tất cả không gian
+              </button>
+            </section>
+          )}
+
           {/* Featured Artists (Spotify-style circular cards) */}
-          {artists.length > 0 && (
+          {spaceArtists.length > 0 && (
             <section>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
                   <Mic2 className="w-5 h-5 text-[#f47b64]" />
-                  <span>Nghệ sĩ trên Soundly</span>
+                  <span>
+                    {activeSpace === 'us-uk'
+                      ? 'Nghệ sĩ US-UK & Quốc Tế'
+                      : activeSpace === 'vn'
+                        ? 'Nghệ sĩ Việt Nam'
+                        : 'Nghệ sĩ trên Soundly'}
+                  </span>
                 </h3>
                 <button
                   type="button"
                   onClick={onOpenArtists}
                   className="text-xs font-bold text-[#a3aed0] hover:text-[#f7f5f0] flex items-center gap-1 transition-colors whitespace-nowrap shrink-0"
                 >
-                  <span>Hiện tất cả ({artists.length})</span>
+                  <span>Hiện tất cả ({spaceArtists.length})</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {artists.slice(0, 6).map((artist) => {
+                {spaceArtists.slice(0, 6).map((artist) => {
                   const isArtistActive =
                     currentTrack &&
                     artist.tracks.some((t) => t.id === currentTrack.id);
@@ -316,15 +511,19 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => playRandomShuffle(tracks)}
+                onClick={() => playRandomShuffle(spaceTracks)}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all shrink-0 self-start sm:self-auto"
               >
                 <Play className="w-3.5 h-3.5 fill-[#070b1a]" />
-                <span>Phát ngẫu nhiên tất cả (Shuffle)</span>
+                <span>
+                  {activeSpace === 'all'
+                    ? 'Phát ngẫu nhiên tất cả (Shuffle)'
+                    : `Phát ngẫu nhiên ${currentSpaceMeta.shortTitle}`}
+                </span>
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
               {vibePlaylists.map((vibe) => (
                 <div
                   key={vibe.id}
@@ -456,10 +655,18 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div>
                 <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-[#f47b64]" />
-                  <span>Top 50 nghe nhiều nhất</span>
+                  <span>
+                    {activeSpace === 'us-uk'
+                      ? 'Top 50 US-UK nghe nhiều nhất'
+                      : activeSpace === 'vn'
+                        ? 'Top 50 Nhạc Việt nghe nhiều nhất'
+                        : 'Top 50 nghe nhiều nhất'}
+                  </span>
                 </h3>
                 <p className="text-xs text-[#a3aed0] mt-0.5">
-                  Bảng xếp hạng những bản nhạc được nghe nhiều nhất trên Soundly
+                  {activeSpace === 'all'
+                    ? 'Bảng xếp hạng những bản nhạc được nghe nhiều nhất trên Soundly'
+                    : `Những bản nhạc nổi bật nhất trong ${currentSpaceMeta.title}`}
                 </p>
               </div>
               <div className="flex items-center gap-3">

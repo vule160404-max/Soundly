@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 const SPOTIFY_GENRE_NAMES = [
   'Pop',
   'V-Pop',
+  'US-UK',
   'Hip-Hop',
   'R&B',
   'Rock',
@@ -32,6 +33,7 @@ export interface ClassifiedTrackResult {
   suggestedTitle: string;
   suggestedArtist: string;
   reason: string;
+  region?: 'vn' | 'us-uk' | 'kpop' | 'other';
 }
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -241,7 +243,311 @@ export const VIETNAMESE_ARTIST_DICTIONARY: Record<string, string> = {
   'ban-nhac': 'Bạn Nhạc.',
   'thanh-hung': 'Thành Hưng',
   'hoang-green': 'Hoàng Green',
+  'w-n': 'W/N',
+  'mlee': 'MLee',
+  'marzuz': 'marzuz',
+  'youngpuppy': 'YoungPuppy',
+  'ronboogz': 'Ronboogz',
+  'wean': 'WEAN',
+  'evy': 'EVY',
+  'dec-ao': 'Dec.ao',
+  'wokeup': 'WOKEUP',
+  'emceedan': 'EmceeDan',
+  '52hz': '52Hz',
+  'vstra': 'VSTRA',
+  'coldzy': 'Coldzy',
+  'khoi-vu': 'Khôi Vũ',
+  'slimv': 'SlimV',
+  'rhymastic': 'Rhymastic',
+  'touliver': 'Touliver',
+  'cukak': 'Cukak',
+  'tinle': 'TINLE',
+  'dj-gin': 'DJ Gin',
+  'charles': 'CHARLES.',
+  'kriss-ngo': 'Kriss Ngo',
+  'spideyboy': 'SpideyBoy',
+  'teuyungboy': 'TeuYungBoy',
+  'mr-lanh': 'MR LANH',
+  'duy-tuan': 'Duy Tuấn',
+  'diep-lam-anh': 'Diệp Lâm Anh',
+  'sony-tran': 'Sony Trần',
+  'thuy-chi': 'Thùy Chi',
+  'linh-cao': 'Linh Cáo',
+  'quang-trung': 'Quang Trung',
+  'tri-dung': 'Trí Dũng',
+  'anh-phan': 'Anh Phan',
+  'ngo-kien-huy': 'Ngô Kiến Huy',
+  'dieu-nhi': 'Diệu Nhi',
+  'son-lam': 'Sơn Lâm',
+  'toc-tien': 'Tóc Tiên',
+  'mai-tien-dung': 'Mai Tiến Dũng',
+  'phuong-my-chi': 'Phương Mỹ Chi',
+  'dong-nhi': 'Đông Nhi',
+  'thu-minh': 'Thu Minh',
+  'sivan': 'SIVAN',
+  'fishy': 'Fishy',
+  'trid-minh': 'Trid Minh',
+  'christopher-wong': 'Christopher Wong',
+  'ian-rees': 'Ian Rees',
+  // Major US-UK / International Artists
+  'taylor-swift': 'Taylor Swift',
+  'the-weeknd': 'The Weeknd',
+  'justin-bieber': 'Justin Bieber',
+  'bruno-mars': 'Bruno Mars',
+  'ariana-grande': 'Ariana Grande',
+  'ed-sheeran': 'Ed Sheeran',
+  'coldplay': 'Coldplay',
+  'imagine-dragons': 'Imagine Dragons',
+  'billie-eilish': 'Billie Eilish',
+  'keshi': 'keshi',
+  'charlie-puth': 'Charlie Puth',
+  'shawn-mendes': 'Shawn Mendes',
+  'dua-lipa': 'Dua Lipa',
+  'maroon-5': 'Maroon 5',
+  'alan-walker': 'Alan Walker',
+  'harry-styles': 'Harry Styles',
+  'adela': 'ADÉLA',
+  'rihanna': 'Rihanna',
+  'adele': 'Adele',
+  'lady-gaga': 'Lady Gaga',
+  'katy-perry': 'Katy Perry',
+  'olivia-rodrigo': 'Olivia Rodrigo',
+  'sabrina-carpenter': 'Sabrina Carpenter',
+  'sza': 'SZA',
+  'kendrick-lamar': 'Kendrick Lamar',
+  'drake': 'Drake',
+  'travis-scott': 'Travis Scott',
+  'eminem': 'Eminem',
+  'post-malone': 'Post Malone',
+  'sam-smith': 'Sam Smith',
+  'john-legend': 'John Legend',
+  'michael-jackson': 'Michael Jackson',
+  'backstreet-boys': 'Backstreet Boys',
+  'westlife': 'Westlife',
+  'linkin-park': 'Linkin Park',
+  'onerepublic': 'OneRepublic',
+  'the-chainsmokers': 'The Chainsmokers',
+  'avicii': 'Avicii',
+  'calvin-harris': 'Calvin Harris',
+  'david-guetta': 'David Guetta',
+  'martin-garrix': 'Martin Garrix',
+  'marshmello': 'Marshmello',
+  'lauv': 'Lauv',
+  'jeremy-zucker': 'Jeremy Zucker',
+  'jvke': 'JVKE',
+  'd4vd': 'd4vd',
+  'cigarettes-after-sex': 'Cigarettes After Sex',
+  'arctic-monkeys': 'Arctic Monkeys',
+  'lana-del-rey': 'Lana Del Rey',
+  'stephen-sanchez': 'Stephen Sanchez',
+  'benson-boone': 'Benson Boone',
+  'teddy-swims': 'Teddy Swims',
+  'hozier': 'Hozier',
+  'gracie-abrams': 'Gracie Abrams',
+  'tate-mcrae': 'Tate McRae',
+  'chappell-roan': 'Chappell Roan',
+  'camila-cabello': 'Camila Cabello',
+  'selena-gomez': 'Selena Gomez',
+  'miley-cyrus': 'Miley Cyrus',
+  'frank-ocean': 'Frank Ocean',
+  'daniel-caesar': 'Daniel Caesar',
+  'joji': 'Joji',
+  'khalid': 'Khalid',
+  'troye-sivan': 'Troye Sivan',
+  'conan-gray': 'Conan Gray',
+  'lewis-capaldi': 'Lewis Capaldi',
+  'james-arthur': 'James Arthur',
+  'clean-bandit': 'Clean Bandit',
+  'one-direction': 'One Direction',
+  'doja-cat': 'Doja Cat',
+  'chris-brown': 'Chris Brown',
+  'jason-derulo': 'Jason Derulo',
+  'lany': 'LANY',
+  'honne': 'HONNE',
+  'laufey': 'Laufey',
+  'beabadoobee': 'beabadoobee',
+  'clairo': 'Clairo',
+  'blackpink': 'BLACKPINK',
+  'bts': 'BTS',
+  'newjeans': 'NewJeans',
+  'wave-to-earth': 'wave to earth',
+  'le-sserafim': 'LE SSERAFIM',
+  'stray-kids': 'Stray Kids',
+  'seventeen': 'SEVENTEEN',
+  'aespa': 'aespa',
 };
+
+const US_UK_ARTIST_SLUG_SET = new Set([
+  'taylor-swift',
+  'the-weeknd',
+  'justin-bieber',
+  'bruno-mars',
+  'ariana-grande',
+  'ed-sheeran',
+  'coldplay',
+  'imagine-dragons',
+  'billie-eilish',
+  'keshi',
+  'charlie-puth',
+  'shawn-mendes',
+  'dua-lipa',
+  'maroon-5',
+  'alan-walker',
+  'harry-styles',
+  'latto',
+  'adela',
+  'bbno',
+  'rihanna',
+  'adele',
+  'lady-gaga',
+  'katy-perry',
+  'olivia-rodrigo',
+  'sabrina-carpenter',
+  'sza',
+  'kendrick-lamar',
+  'drake',
+  'travis-scott',
+  'eminem',
+  'post-malone',
+  'sia',
+  'sam-smith',
+  'john-legend',
+  'michael-jackson',
+  'backstreet-boys',
+  'westlife',
+  'linkin-park',
+  'onerepublic',
+  'the-chainsmokers',
+  'avicii',
+  'calvin-harris',
+  'david-guetta',
+  'martin-garrix',
+  'kygo',
+  'zedd',
+  'marshmello',
+  'lauv',
+  'jeremy-zucker',
+  'jvke',
+  'd4vd',
+  'cigarettes-after-sex',
+  'arctic-monkeys',
+  'lana-del-rey',
+  'stephen-sanchez',
+  'benson-boone',
+  'teddy-swims',
+  'hozier',
+  'gracie-abrams',
+  'tate-mcrae',
+  'chappell-roan',
+  'camila-cabello',
+  'selena-gomez',
+  'miley-cyrus',
+  'frank-ocean',
+  'daniel-caesar',
+  'giveon',
+  'joji',
+  'niki',
+  'khalid',
+  'troye-sivan',
+  'conan-gray',
+  'pink-sweat',
+  'alec-benjamin',
+  'lewis-capaldi',
+  'james-arthur',
+  'passenger',
+  'clean-bandit',
+  'zayn',
+  'one-direction',
+  'lorde',
+  'doja-cat',
+  'nicki-minaj',
+  'cardi-b',
+  'chris-brown',
+  'jason-derulo',
+  'lany',
+  'honne',
+  'laufey',
+  'beabadoobee',
+  'clairo',
+  'beyonce',
+  'shakira',
+  'usher',
+  'alicia-keys',
+  'mariah-carey',
+  'celine-dion',
+  'elton-john',
+  'queen',
+  'the-beatles',
+  'abba',
+]);
+
+const KPOP_ARTIST_SLUG_SET = new Set([
+  'bts',
+  'blackpink',
+  'jung-kook',
+  'jungkook',
+  'lisa',
+  'jennie',
+  'rose',
+  'jisoo',
+  'twice',
+  'exo',
+  'seventeen',
+  'stray-kids',
+  'newjeans',
+  'aespa',
+  'ive',
+  'le-sserafim',
+  'wave-to-earth',
+  'aoa',
+  'bigbang',
+  'iu',
+  'taeyeon',
+  'hyo',
+  'g-dragon',
+  'babymonster',
+  'illit',
+  'enhypen',
+  'txt',
+  'nct',
+  'itzy',
+  'red-velvet',
+  'cortis',
+  'ji-yeon',
+]);
+
+function isUsUkArtistSlugged(artistText?: string): boolean {
+  if (!artistText) return false;
+  const parts = artistText
+    .split(/(?:,|&|;|\s+\/\s+|\bfeat\.?\b|\bft\.?\b|\bx\b)/i)
+    .map(p => slugifyArtistLookup(p))
+    .filter(Boolean);
+  return parts.some(p => US_UK_ARTIST_SLUG_SET.has(p));
+}
+
+function isKPopArtistSlugged(artistText?: string): boolean {
+  if (!artistText) return false;
+  const parts = artistText
+    .split(/(?:,|&|;|\s+\/\s+|\bfeat\.?\b|\bft\.?\b|\bx\b)/i)
+    .map(p => slugifyArtistLookup(p))
+    .filter(Boolean);
+  return parts.some(p => KPOP_ARTIST_SLUG_SET.has(p));
+}
+
+const VN_UNIQUE_CHARS_REGEX =
+  /[ăâêôơưđằắẳẵặầấẩẫậềếểễệỉĩịồốổỗộờớởỡợủũụừứửữựỳỷỹỵ]/i;
+
+function isVietnameseArtistSlugged(artistText?: string): boolean {
+  if (!artistText) return false;
+  if (VN_UNIQUE_CHARS_REGEX.test(artistText)) {
+    return true;
+  }
+  const parts = artistText
+    .split(/(?:,|&|;|\s+\/\s+|\bfeat\.?\b|\bft\.?\b|\bx\b)/i)
+    .map(p => slugifyArtistLookup(p))
+    .filter(Boolean);
+  return parts.some(p => p in VIETNAMESE_ARTIST_DICTIONARY && !US_UK_ARTIST_SLUG_SET.has(p) && !KPOP_ARTIST_SLUG_SET.has(p));
+}
 
 const VIETNAMESE_TITLE_DICTIONARY: Record<
   string,
@@ -329,6 +635,29 @@ const VIETNAMESE_TITLE_DICTIONARY: Record<
   'me hieu con khong': { title: 'Mẹ Hiểu Con Không', artist: 'Mr. Siro', genre: 'Ballad' },
   'nguyen lam tri ky': { title: 'Nguyện Làm Tri Kỷ', artist: 'Mr. Siro', genre: 'Ballad' },
   'catch me if you can': { title: 'Catch Me If You Can', genre: 'V-Pop' },
+  'vut tan': { title: 'Vụt Tan', artist: 'SOOBIN', genre: 'V-Pop' },
+  'vui di em': { title: 'Vui Đi Em', artist: 'SOOBIN', genre: 'V-Pop' },
+  've khoi': { title: 'Vẽ Khói', artist: 'SOOBIN', genre: 'V-Pop' },
+  'vai lan don dua': { title: 'Vài Lần Đón Đưa', artist: 'SOOBIN', genre: 'V-Pop' },
+  'tim lai reu phong': { title: 'Tìm Lại Rêu Phong', artist: 'SOOBIN', genre: 'Rock' },
+  'di va yeu': { title: 'Đi Và Yêu', artist: 'SOOBIN', genre: 'V-Pop' },
+  'chuyen chang co don': { title: 'Chuyện Chẳng Cô Đơn', artist: 'SOOBIN', genre: 'Ballad' },
+  'chi toi': { title: 'Chị Tôi', artist: 'SOOBIN', genre: 'Ballad' },
+  'ai kho vi ai': { title: 'Ai Khổ Vì Ai', artist: 'SOOBIN', genre: 'Ballad' },
+  'lang tham': { title: 'Lặng Thầm', artist: 'Thùy Chi', genre: 'Ballad' },
+  'gan ngay truoc mat': { title: 'Gần Ngay Trước Mặt', artist: 'Thùy Chi', genre: 'Ballad' },
+  'chac co le': { title: 'Chắc Có Lẽ', artist: 'Thùy Chi', genre: 'Ballad' },
+  'chim sau': { title: 'Chìm Sâu', artist: 'Sony Trần', genre: 'Hip-Hop' },
+  'ngay tho': { title: 'Ngây Thơ', genre: 'V-Pop' },
+  'xmas day em dau': { title: 'Xmas Day, Em Đâu', genre: 'V-Pop' },
+  'vut': { title: 'Vụt', genre: 'Hip-Hop' },
+  'lam lanh chua tinh': { title: 'Làm Lành Chữa Tình', genre: 'V-Pop' },
+  'that qua dang de yeu': { title: 'Thật Quá Đáng.. Để Yêu', genre: 'V-Pop' },
+  'doi it thoi om de': { title: 'Dỗi Ít Thôi Ôm Đê', genre: 'V-Pop' },
+  'ngongiodemquatrangsangdemnay': { title: 'Ngọn Gió Đêm Qua Trăng Sáng Đêm Nay', artist: 'RPT MCK, marzuz', genre: 'V-Pop' },
+  'haydeanhduoccungemdau': { title: 'Hãy Để Anh Được Cùng Em Đau', artist: 'SIVAN, Kai Đinh', genre: 'Lo-Fi & Chill' },
+  'toidaidot': { title: 'Tôi Dại Dột', artist: 'GREY D', genre: 'Ballad' },
+  'van': { title: 'Vẫn', artist: 'Bích Phương', genre: 'Ballad' },
 };
 
 const VERSION_SUFFIX_LABELS: Array<{ slug: string; label: string; genreHint?: string }> = [
@@ -389,6 +718,80 @@ export function buildArtistSlugDictionaryFromTracks(
   return map;
 }
 
+function extractTrailingTitleQualifierServer(cleanTitle: string): {
+  core: string;
+  qualifier: string;
+} {
+  const suffixPatterns = [
+    /\s+(-\s+(?:Original|Beat|Live|Remix|Lofi|Lo-Fi(?:\s+Ver(?:sion)?)?|Acoustic(?:\s+Version)?|Piano\s+Version|Ballad\s+Version|Instrumental|Sped\s+Up|Slowed|Chinese\s+Version|English\s+Version|EDM\s+Version|Unplugged|Duzme\s+Remix|Cukak\s+Remix|KProx\s+Remix|TB\s+Remix|Duy\s+Tuan\s+Remix))$/i,
+    /\s+(\((?:Original|Beat|Live|Remix|Lofi|Lo-Fi(?:\s+Ver(?:sion)?)?|Acoustic(?:\s+Version)?|Piano\s+Version|Instrumental|Sped\s+Up|Slowed|Chinese\s+Version|English\s+Version|Unplugged)\))$/i,
+  ];
+  let working = cleanTitle.trim();
+  const collected: string[] = [];
+  let matched = true;
+  while (matched) {
+    matched = false;
+    for (const pat of suffixPatterns) {
+      const m = working.match(pat);
+      if (m && m[1]) {
+        collected.unshift(m[1].trim());
+        working = working.slice(0, m.index).trim();
+        matched = true;
+        break;
+      }
+    }
+  }
+  return {
+    core: working,
+    qualifier: collected.join(' '),
+  };
+}
+
+function healArtistDisplayStringServer(
+  rawArtist: string,
+  artistDict: Record<string, string> = VIETNAMESE_ARTIST_DICTIONARY
+): string {
+  const trimmed = (rawArtist || '').trim();
+  if (!trimmed) return rawArtist;
+
+  const wholeSlug = slugifyArtistLookup(trimmed);
+  if (
+    artistDict[wholeSlug] &&
+    (isRawSlugDisplayText(trimmed) ||
+      (!/[^\u0000-\u007f]/.test(trimmed) && /[^\u0000-\u007f]/.test(artistDict[wholeSlug])))
+  ) {
+    return artistDict[wholeSlug];
+  }
+
+  const tokens = trimmed.split(/(\s*,\s*|\s*&\s*|\s+ft\.?\s+|\s+feat\.?\s+)/i);
+  let changed = false;
+  const rebuilt = tokens.map(part => {
+    if (!part || /^(\s*,\s*|\s*&\s*|\s+ft\.?\s+|\s+feat\.?\s+)$/i.test(part)) {
+      return part;
+    }
+    const slug = slugifyArtistLookup(part);
+    const mapped = artistDict[slug];
+    if (!mapped) {
+      if (isRawSlugDisplayText(part)) {
+        changed = true;
+        return toSmartTitleCase(part.replace(/[-_]+/g, ' '));
+      }
+      return part;
+    }
+    const partHasAccents = /[^\u0000-\u007f]/.test(part);
+    const mappedHasAccents = /[^\u0000-\u007f]/.test(mapped);
+    if ((!partHasAccents && mappedHasAccents) || isRawSlugDisplayText(part)) {
+      if (mapped !== part) {
+        changed = true;
+        return mapped;
+      }
+    }
+    return part;
+  });
+
+  return changed ? rebuilt.join('') : rawArtist;
+}
+
 export function parseAndCleanSlugTrack(
   rawTitle: string,
   rawArtist: string,
@@ -398,10 +801,33 @@ export function parseAndCleanSlugTrack(
   cleanTitleInput = cleanTitleInput.replace(/-\d{10,}$/, '').replace(/-[0-9a-f]{8}$/i, '').trim();
 
   const currentArtist = (rawArtist || '').trim();
+  const healedArtist = healArtistDisplayStringServer(currentArtist, artistDict);
   const hasPlaceholderArtist =
-    !currentArtist ||
-    PLACEHOLDER_ARTISTS.has(normalizeAsciiText(currentArtist)) ||
-    isRawSlugDisplayText(currentArtist);
+    !healedArtist ||
+    PLACEHOLDER_ARTISTS.has(normalizeAsciiText(healedArtist)) ||
+    isRawSlugDisplayText(healedArtist);
+
+  const { core, qualifier } = extractTrailingTitleQualifierServer(cleanTitleInput);
+  const coreNorm = normalizeAsciiText(core);
+  const qualifierMatch = VIETNAMESE_TITLE_DICTIONARY[coreNorm];
+  const isAmbiguousShortKey = coreNorm === 'van' || coreNorm === 'vut';
+  const hasVnArtistContext =
+    /[ăâêôơưđàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/i.test(healedArtist) ||
+    isVietnameseArtistSlugged(healedArtist);
+
+  if (qualifierMatch && (!isAmbiguousShortKey || hasVnArtistContext)) {
+    const resolvedTitle = qualifier
+      ? `${qualifierMatch.title} ${qualifier}`.trim()
+      : qualifierMatch.title;
+    const resolvedArtist = !hasPlaceholderArtist
+      ? healedArtist
+      : qualifierMatch.artist || 'Nghệ sĩ chưa rõ';
+    return {
+      title: resolvedTitle,
+      artist: resolvedArtist,
+      genreHint: qualifierMatch.genre,
+    };
+  }
 
   const spaceKey = cleanTitleInput
     .toLowerCase()
@@ -416,7 +842,7 @@ export function parseAndCleanSlugTrack(
 
   if (directDictMatch && isRawSlugDisplayText(cleanTitleInput)) {
     const resolvedArtist = !hasPlaceholderArtist
-      ? currentArtist
+      ? healedArtist
       : directDictMatch.artist || 'Nghệ sĩ chưa rõ';
     return {
       title: directDictMatch.title,
@@ -487,14 +913,14 @@ export function parseAndCleanSlugTrack(
       .join(' ')
       .trim();
 
-    let finalArtist = currentArtist;
+    let finalArtist = healedArtist;
     if (hasPlaceholderArtist) {
       if (extractedArtists.length > 0) {
         finalArtist = extractedArtists.join(', ');
       } else if (coreMatch?.artist) {
         finalArtist = coreMatch.artist;
       } else {
-        const artistSlugCheck = slugifyArtistLookup(currentArtist);
+        const artistSlugCheck = slugifyArtistLookup(healedArtist);
         if (artistDict[artistSlugCheck]) {
           finalArtist = artistDict[artistSlugCheck];
         }
@@ -511,16 +937,25 @@ export function parseAndCleanSlugTrack(
   let finalTitle = cleanTitleInput;
   if (isRawSlugDisplayText(cleanTitleInput)) {
     finalTitle = directDictMatch ? directDictMatch.title : toSmartTitleCase(spaceKey);
+  } else if (
+    /[^\u0000-\u007f]/.test(cleanTitleInput) &&
+    cleanTitleInput === cleanTitleInput.toLowerCase() &&
+    cleanTitleInput.length >= 4
+  ) {
+    finalTitle = cleanTitleInput
+      .split(/\s+/)
+      .map(w => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(' ');
   }
 
-  let finalArtist = currentArtist;
-  const artistSlugKey = slugifyArtistLookup(currentArtist);
-  if (artistDict[artistSlugKey] && isRawSlugDisplayText(currentArtist)) {
+  let finalArtist = healedArtist;
+  const artistSlugKey = slugifyArtistLookup(healedArtist);
+  if (artistDict[artistSlugKey] && isRawSlugDisplayText(healedArtist)) {
     finalArtist = artistDict[artistSlugKey];
   } else if (directDictMatch?.artist && hasPlaceholderArtist) {
     finalArtist = directDictMatch.artist;
-  } else if (!hasPlaceholderArtist && isRawSlugDisplayText(currentArtist)) {
-    finalArtist = toSmartTitleCase(currentArtist.replace(/[-_]+/g, ' '));
+  } else if (!hasPlaceholderArtist && isRawSlugDisplayText(healedArtist)) {
+    finalArtist = toSmartTitleCase(healedArtist.replace(/[-_]+/g, ' '));
   }
 
   return {
@@ -550,15 +985,17 @@ export function fallbackClassify(
         : 'Nghệ sĩ chưa rõ';
     let title = clean;
 
-    if (clean.includes(' - ')) {
-      const parts = clean.split(' - ');
-      if (parts.length >= 2) {
-        const potentialArtist = parts[0].replace(/^[0-9.\s]+/, '').trim();
-        const potentialTitle = parts.slice(1).join(' - ').trim();
-        if (potentialArtist && isRawSlugDisplayText(artist)) {
-          artist = potentialArtist;
+    if (clean.includes(' - ') && isRawSlugDisplayText(artist)) {
+      const suffixTagGuard =
+        /\s+-\s+(?:Original|Beat|Live|Remix|Lofi|Lo-Fi|Acoustic|Piano|Instrumental|Explicit|Unplugged|Sped Up|Slowed|Chinese Version|English Version)/i;
+      if (!suffixTagGuard.test(clean)) {
+        const parts = clean.split(' - ');
+        if (parts.length >= 2) {
+          const potentialArtist = parts[0].replace(/^[0-9.\s]+/, '').trim();
+          const potentialTitle = parts.slice(1).join(' - ').trim();
+          if (potentialArtist) artist = potentialArtist;
+          if (potentialTitle) title = potentialTitle;
         }
-        if (potentialTitle) title = potentialTitle;
       }
     }
 
@@ -567,6 +1004,16 @@ export function fallbackClassify(
     artist = restored.artist;
 
     const lower = (title + ' ' + artist).toLowerCase();
+    const isUsUkArtist = isUsUkArtistSlugged(artist);
+    const isKPopArtist = isKPopArtistSlugged(artist);
+    const isVnArtist = isVietnameseArtistSlugged(artist);
+    const hasVnChars =
+      VN_UNIQUE_CHARS_REGEX.test(title + ' ' + artist) ||
+      (!isUsUkArtist &&
+        !isKPopArtist &&
+        /[ăâêôơưđàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/i.test(title + ' ' + artist));
+    const hasVnAsciiWords = /\b(nguoi|tinh|yeu|anh|em|khong|phai|thoi|buon|nho|mai|doi|duyen|mua|dem|cho|thuong|ve|mot|tuoi|gio|chuyen|long|minh|cua|nhung|nay|day|sau|truoc|muon|can|dau|the|gi|sao|vi|nhu)\b/i.test(title);
+
     let genre = restored.genreHint || 'Pop';
     if (
       lower.includes('rap') ||
@@ -625,18 +1072,32 @@ export function fallbackClassify(
       genre = 'Classical';
     } else if (lower.includes('indie') || lower.includes('folk') || lower.includes('underground')) {
       genre = 'Indie';
-    } else if (lower.includes('vpop') || lower.includes('nhạc trẻ')) {
+    } else if (isKPopArtist || /[\uac00-\ud7af]/.test(title + artist)) {
+      genre = 'K-Pop';
+    } else if (isUsUkArtist && !isVnArtist) {
+      genre = 'US-UK';
+    } else if (lower.includes('vpop') || lower.includes('nhạc trẻ') || hasVnChars || hasVnAsciiWords || isVnArtist) {
       genre = 'V-Pop';
     }
+
+    const detectedRegion: 'vn' | 'us-uk' | 'kpop' | 'other' =
+      genre === 'US-UK'
+        ? 'us-uk'
+        : genre === 'K-Pop'
+          ? 'kpop'
+          : hasVnChars || hasVnAsciiWords || isVnArtist || genre === 'V-Pop'
+            ? 'vn'
+            : 'other';
 
     return {
       id: item.id,
       genre,
-      mood: 'Thư giãn & Dễ chịu',
+      mood: genre === 'US-UK' ? 'Quốc tế & Cuốn hút' : 'Thư giãn & Dễ chịu',
       bpm: 110,
       suggestedTitle: title,
       suggestedArtist: artist,
-      reason: 'Phân loại tự động & khôi phục dấu tiếng Việt thông minh Soundly AI.',
+      region: detectedRegion,
+      reason: 'Phân loại tự động & nhận diện nguồn gốc thận trọng Soundly AI.',
     };
   });
 }
@@ -669,28 +1130,39 @@ export async function classifyBatchWithGemini(
       };
     });
 
-    const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI) am hiểu sâu sắc nhạc Việt Nam (V-Pop, Ballad, Bolero, Indie, Rap Việt) và nhạc quốc tế.
-Hãy phân tích danh sách bài hát bên dưới dựa trên 'searchQuery' (tên bài hát và nghệ sĩ đã làm sạch) và 'artistHint' bằng cách sử dụng Google Search Grounding để xác minh chính xác:
-1. Tên bài hát gốc chuẩn có dấu tiếng Việt và viết hoa đúng (suggestedTitle).
-2. Tên nghệ sĩ chính xác có dấu (suggestedArtist).
+    const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI) có công cụ Google Search Grounding.
+Hãy tra cứu từng bài hát trong danh sách bên dưới để xác minh CHÍNH XÁC:
+1. Tên bài hát chuẩn gốc (suggestedTitle) và Tên nghệ sĩ chuẩn gốc (suggestedArtist).
+2. Nguồn gốc thực tế của nghệ sĩ & bài hát (region: "vn" | "us-uk" | "kpop" | "other").
 3. Thể loại chuẩn (genre) trong danh sách cho phép.
 4. Tâm trạng (mood), nhịp độ (bpm), và lý do (reason).
 
-LƯU Ý QUAN TRỌNG:
-- Nếu searchQuery vẫn chưa có dấu tiếng Việt đầy đủ (ví dụ: "buitruonglinh - Tung Buoc Cham 100 Buoc" hoặc "Mr. Siro - Guong Mat La Lam"), hãy tra cứu để trả về tên bài hát có dấu tiếng Việt chuẩn xác ("Từng Bước Chậm 100 Bước", "Gương Mặt Lạ Lẫm").
-- Giữ định dạng gọn đẹp cho phiên bản nếu có: "(feat. ...)", "(Lo-Fi Ver.)", "(Acoustic Version)", "(Piano Version)", "(Remix)", "(Beat)".
+QUY TẮC BẮT BUỘC VỀ PHÂN LOẠI NHẠC NƯỚC NGOÀI (US-UK) — TUYỆT ĐỐI KHÔNG SUY ĐOÁN:
+- **KHÔNG BAO GIỜ** kết luận là "US-UK" chỉ vì tên bài hát là tiếng Anh hoặc nghệ danh ca sĩ viết bằng tiếng Anh/không dấu!
+- Rất nhiều nghệ sĩ Việt Nam đặt nghệ danh tiếng Anh và/hoặc hát bài tên tiếng Anh (ví dụ: SIVAN, Wren Evans, AMEE, SOOBIN, MONO, tlinh, RPT MCK, HIEUTHUHAI, Low G, GREY D, Orange, VSTRA, 52Hz, Coldzy, Fishy, Trid Minh, Baby Sam, Ronboogz...), hoặc nghệ sĩ K-Pop/Châu Á (BTS, BLACKPINK, wave to earth, Jung Kook, LISA...), hoặc nhạc phim Việt Nam do nhạc sĩ nước ngoài soạn (ví dụ: *Mắt Biếc* OST của Christopher Wong, Garrett Crosby, Ian Rees — đây là nhạc phim Việt Nam, KHÔNG phải nhạc US-UK!).
+- Chỉ gán **"region": "us-uk"** (và chọn **"genre": "US-UK"** nếu là Pop/Ballad/R&B Âu Mỹ) KHI VÀ CHỈ KHI bạn đã **tra cứu Google Search xác minh chắc chắn** nghệ sĩ đó thực sự thuộc thị trường Âu Mỹ / phương Tây (Mỹ, Anh, Canada, Úc, châu Âu... ví dụ: Taylor Swift, Harry Styles, The Weeknd, Billie Eilish, keshi, ADÉLA, Ed Sheeran, Bruno Mars...).
+- Nếu chưa xác minh chắc chắn được quốc tịch/thị trường của nghệ sĩ qua Google Search, KHÔNG được gán "US-UK" — hãy đặt "region": "other" và chọn thể loại âm nhạc trung tính (Pop, Ballad, EDM / Electronic, Classical...).
+- Nếu đã xác minh là nghệ sĩ/bài hát Việt Nam (kể cả tựa tiếng Anh như *Exit Sign*, *In Love*, *Cause I Love You*, *Making My Way*) hoặc nhạc phim Việt Nam: đặt **"region": "vn"** và chọn thể loại phù hợp ("V-Pop", "Ballad", "Hip-Hop", "Indie", "Lo-Fi & Chill", "Classical"...).
+- Nếu là nhạc Hàn Quốc/Nhật Bản/Châu Á: đặt **"region": "kpop"** và chọn **"K-Pop"** (hoặc thể loại phù hợp).
+
+QUY TẮC BẮT BUỘC KHÔI PHỤC DẤU TIẾNG VIỆT (SẮC, HUYỀN, HỎI, NGÃ, NẶNG, Ă, Â, Ê, Ô, Ơ, Ư, Đ):
+- Rất nhiều bài hát Việt Nam trong dữ liệu đầu vào bị mất hết dấu thanh (sắc, huyền, hỏi, ngã, nặng) hoặc dấu chữ cái tiếng Việt trên CẢ tên bài hát lẫn tên nghệ sĩ, hoặc bị viết dính liền không dấu.
+- Ví dụ thực tế:
+  • "Vai Lan Don Dua" -> "Vài Lần Đón Đưa"
+  • "Tim Lai Reu Phong" -> "Tìm Lại Rêu Phong"
+  • "Chuyen Chang Co Don" -> "Chuyện Chẳng Cô Đơn"
+  • "Ai Kho Vi Ai" -> "Ai Khổ Vì Ai"
+  • "Vut Tan" -> "Vụt Tan" | "Vui Di Em" -> "Vui Đi Em" | "Ve Khoi" -> "Vẽ Khói" | "Di Va Yeu" -> "Đi Và Yêu" | "Chi Toi" -> "Chị Tôi"
+  • "Lang Tham" -> "Lặng Thầm" | "Gan Ngay Truoc Mat" -> "Gần Ngay Trước Mặt" | "Chac Co Le" -> "Chắc Có Lẽ"
+  • "Ngay Tho" -> "Ngây Thơ" | "Chim Sau" -> "Chìm Sâu"
+  • "NGONGIODEMQUATRANGSANGDEMNAY" -> "Ngọn Gió Đêm Qua Trăng Sáng Đêm Nay"
+  • "Haydeanhduoccungemdau" -> "Hãy Để Anh Được Cùng Em Đau"
+  • Tên nghệ sĩ: "Duy Tuan" -> "Duy Tuấn", "Diep Lam Anh" -> "Diệp Lâm Anh", "Phuc Du" -> "Phúc Du", "Khoi Vu" -> "Khôi Vũ", "Sony Tran" -> "Sony Trần", "Thuy Chi" -> "Thùy Chi".
+- **LƯU Ý QUAN TRỌNG**: Tra cứu Google Search tên bài hát gốc để KHÔNG thêm sai dấu đối với những bài vốn không có dấu thanh hoặc cố tình viết như vậy (ví dụ: *"Sau Tan Ca"* của Quang Hùng MasterD, *"Do Ai"* của Vũ., *"Mong Cho Anh"* của Vũ Cát Tường, *"Trao"* của Wren Evans, *"Lan Man"* của Ronboogz, *"Anh Em Ca"* của Da LAB) và **KHÔNG BAO GIỜ** thêm dấu tiếng Việt vào bài hát tiếng Anh/US-UK/K-Pop.
+- Giữ định dạng gọn đẹp cho phiên bản nếu có: "(feat. ...)", "(Lo-Fi Ver.)", "(Acoustic Version)", "(Piano Version)", "(Remix)", "(Beat)", "(Original)".
 
 DANH SÁCH THỂ LOẠI CHUẨN BẮT BUỘC (chỉ chọn 1 trong các giá trị sau cho trường genre):
 [${allowedGenresList}]
-
-Yêu cầu cho từng bài hát:
-1. "id": Giữ nguyên id gốc của bài hát.
-2. "genre": Chọn chính xác 1 thể loại phù hợp nhất trong danh sách ở trên.
-3. "suggestedArtist": Tên nghệ sĩ/tác giả có đầy đủ dấu tiếng Việt chuẩn.
-4. "suggestedTitle": Tên bài hát sạch đẹp, chuẩn có dấu tiếng Việt.
-5. "mood": Tâm trạng ngắn gọn bằng tiếng Việt (ví dụ: "Sâu lắng & Tự sự", "Thư giãn & Chill", "Lãng mạn", "Sôi động").
-6. "bpm": Ước lượng nhịp BPM (số nguyên từ 60 đến 180).
-7. "reason": Giải thích ngắn gọn 1 câu bằng tiếng Việt lý do chọn thể loại này.
 
 Danh sách bài hát cần phân loại:
 ${JSON.stringify(processedItems, null, 2)}`;
@@ -700,7 +1172,7 @@ ${JSON.stringify(processedItems, null, 2)}`;
       contents: prompt,
       config: {
         systemInstruction:
-          'You are a precise Spotify music genre classifier and metadata parser with real-time Google Search grounding. Use Google Search to verify song title diacritics, artist, and genre whenever needed. Always return valid JSON matching the schema and strictly pick genres from the provided allowlist.',
+          'You are a precise music curator with real-time Google Search grounding. Never assume a song is US-UK just from an English title or English artist stage name—always verify the artist nationality/market and song origin via Google Search first. For Vietnamese songs and artists missing Vietnamese tone marks (sắc, huyền, hỏi, ngã, nặng) or vowel diacritics, use Google Search to restore exact official Vietnamese spelling. Always return valid JSON matching the schema.',
         tools: [{ googleSearch: {} }],
         responseMimeType: 'application/json',
         responseSchema: {
@@ -710,6 +1182,7 @@ ${JSON.stringify(processedItems, null, 2)}`;
             properties: {
               id: { type: Type.STRING },
               genre: { type: Type.STRING },
+              region: { type: Type.STRING },
               mood: { type: Type.STRING },
               bpm: { type: Type.INTEGER },
               suggestedTitle: { type: Type.STRING },
@@ -719,6 +1192,7 @@ ${JSON.stringify(processedItems, null, 2)}`;
             required: [
               'id',
               'genre',
+              'region',
               'mood',
               'bpm',
               'suggestedTitle',
@@ -734,13 +1208,53 @@ ${JSON.stringify(processedItems, null, 2)}`;
     const parsed = JSON.parse(rawText) as ClassifiedTrackResult[];
 
     return parsed.map(item => {
-      const matchedGenre =
-        SPOTIFY_GENRE_NAMES.find(
-          g => g.toLowerCase() === (item.genre || '').toLowerCase()
-        ) || 'Pop';
+      const rawGenreLower = (item.genre || '').trim().toLowerCase();
+      let matchedGenre =
+        SPOTIFY_GENRE_NAMES.find(g => g.toLowerCase() === rawGenreLower) || '';
+      if (!matchedGenre) {
+        if (
+          rawGenreLower.includes('us-uk') ||
+          rawGenreLower.includes('us uk') ||
+          rawGenreLower.includes('us/uk') ||
+          rawGenreLower.includes('nước ngoài') ||
+          rawGenreLower.includes('quốc tế') ||
+          rawGenreLower.includes('international') ||
+          rawGenreLower.includes('western')
+        ) {
+          matchedGenre = 'US-UK';
+        } else if (rawGenreLower.includes('v-pop') || rawGenreLower.includes('vpop')) {
+          matchedGenre = 'V-Pop';
+        } else if (rawGenreLower.includes('k-pop') || rawGenreLower.includes('kpop')) {
+          matchedGenre = 'K-Pop';
+        } else if (rawGenreLower.includes('lo-fi') || rawGenreLower.includes('lofi')) {
+          matchedGenre = 'Lo-Fi & Chill';
+        } else if (rawGenreLower.includes('edm') || rawGenreLower.includes('electronic')) {
+          matchedGenre = 'EDM / Electronic';
+        } else {
+          matchedGenre = 'Pop';
+        }
+      }
+      const rawRegion = String(item.region || '').trim().toLowerCase();
+      const verifiedRegion: 'vn' | 'us-uk' | 'kpop' | 'other' =
+        rawRegion === 'us-uk' || rawRegion === 'vn' || rawRegion === 'kpop' || rawRegion === 'other'
+          ? rawRegion
+          : matchedGenre === 'US-UK'
+            ? 'us-uk'
+            : matchedGenre === 'K-Pop'
+              ? 'kpop'
+              : matchedGenre === 'V-Pop'
+                ? 'vn'
+                : 'other';
+
+      // Guard against mismatch: if region isn't verified as us-uk, never force US-UK genre
+      if (matchedGenre === 'US-UK' && verifiedRegion !== 'us-uk') {
+        matchedGenre = verifiedRegion === 'vn' ? 'V-Pop' : 'Pop';
+      }
+
       return {
         ...item,
         genre: matchedGenre,
+        region: verifiedRegion,
         bpm: Number.isFinite(item.bpm) ? item.bpm : 110,
         suggestedTitle: item.suggestedTitle || 'Bài hát',
         suggestedArtist: item.suggestedArtist || 'Nghệ sĩ chưa rõ',
@@ -754,3 +1268,95 @@ ${JSON.stringify(processedItems, null, 2)}`;
     return fallbackClassify(items);
   }
 }
+
+export function detectTrackRegionServer(track: {
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  region?: 'vn' | 'us-uk' | 'kpop' | 'other';
+}): 'vn' | 'us-uk' | 'kpop' | 'other' {
+  if (track.region === 'vn' || track.region === 'us-uk' || track.region === 'kpop') {
+    return track.region;
+  }
+
+  const genreLower = (track.genre || '').trim().toLowerCase();
+  const title = (track.title || '').trim();
+  const artist = (track.artist || '').trim();
+  const album = (track.album || '').trim();
+
+  if (genreLower === 'us-uk' || genreLower === 'us/uk' || genreLower === 'us uk') {
+    return 'us-uk';
+  }
+  if (genreLower === 'k-pop' || genreLower === 'kpop') {
+    return 'kpop';
+  }
+  if (genreLower === 'v-pop' || genreLower === 'vpop') {
+    return 'vn';
+  }
+
+  if (
+    VN_UNIQUE_CHARS_REGEX.test(title) ||
+    VN_UNIQUE_CHARS_REGEX.test(artist) ||
+    isVietnameseArtistSlugged(artist)
+  ) {
+    return 'vn';
+  }
+
+  if (
+    /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(title + artist) ||
+    isKPopArtistSlugged(artist)
+  ) {
+    return 'kpop';
+  }
+
+  if (isUsUkArtistSlugged(artist)) {
+    return 'us-uk';
+  }
+
+  const vnCharsRegex =
+    /[ăâêôơưđàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/i;
+  if (
+    vnCharsRegex.test(title) ||
+    vnCharsRegex.test(artist) ||
+    (album && album !== 'Kho nhạc Soundly' && album !== 'Kho nhạc Cloudflare R2' && vnCharsRegex.test(album))
+  ) {
+    return 'vn';
+  }
+
+  if (
+    /\b(nguoi|tinh|yeu|anh|em|khong|phai|thoi|buon|nho|mai|doi|duyen|mua|dem|cho|thuong|ve|mot|tuoi|gio|chuyen|long|minh|cua|nhung|nay|day|sau|truoc|muon|can|dau|the|gi|sao|vi|nhu)\b/i.test(
+      title
+    )
+  ) {
+    return 'vn';
+  }
+
+  return 'other';
+}
+
+export function matchesTrackGenreFilter(
+  track: {
+    title?: string;
+    artist?: string;
+    album?: string;
+    genre?: string;
+    region?: 'vn' | 'us-uk' | 'kpop' | 'other';
+  },
+  genreName: string
+): boolean {
+  if (!genreName || genreName === 'all') return true;
+  const target = genreName.trim().toLowerCase();
+  if ((track.genre || '').toLowerCase() === target) return true;
+  if (target === 'us-uk' || target === 'us/uk' || target === 'us uk') {
+    return detectTrackRegionServer(track) === 'us-uk';
+  }
+  if (target === 'k-pop' || target === 'kpop') {
+    return detectTrackRegionServer(track) === 'kpop';
+  }
+  if (target === 'v-pop' || target === 'vpop') {
+    return detectTrackRegionServer(track) === 'vn' && (track.genre || '').toLowerCase() === 'pop';
+  }
+  return false;
+}
+

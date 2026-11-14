@@ -114,6 +114,9 @@ export default async function handler(
             'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
           duration: typeof item.duration === 'number' ? item.duration : 210,
           genre: String(item.genre || 'Pop'),
+          ...(item.region === 'vn' || item.region === 'us-uk' || item.region === 'kpop' || item.region === 'other'
+            ? { region: item.region }
+            : {}),
           releaseYear:
             typeof item.releaseYear === 'number'
               ? item.releaseYear

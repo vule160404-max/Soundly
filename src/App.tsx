@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { PlayerProvider, usePlayer } from './context/PlayerContext';
+import { PlayerProvider, usePlayer, getAutoVibePlaylists } from './context/PlayerContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -38,6 +38,11 @@ import {
   matchesTrackSearch,
 } from './utils/artistSync';
 import { deduplicateTracksList } from './utils/trackDedupe';
+import {
+  MusicSpaceId,
+  filterTracksBySpace,
+  matchesGenreFilter,
+} from './utils/musicSpaces';
 import { MobileLoadingScreen } from './components/MobileLoadingScreen';
 
 const MainContent: React.FC = () => {
@@ -49,6 +54,7 @@ const MainContent: React.FC = () => {
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeGenre, setActiveGenre] = useState<string>('all');
+  const [activeSpace, setActiveSpace] = useState<MusicSpaceId>('all');
   const [isSleepTimerOpen, setIsSleepTimerOpen] = useState<boolean>(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState<boolean>(false);
@@ -265,9 +271,7 @@ const MainContent: React.FC = () => {
   const filteredTracks = useMemo(() => {
     let results = allTracks;
     if (activeGenre && activeGenre !== 'all') {
-      results = results.filter(
-        (t) => t.genre.toLowerCase() === activeGenre.toLowerCase()
-      );
+      results = results.filter((t) => matchesGenreFilter(t, activeGenre));
     }
     if (searchQuery.trim()) {
       results = results.filter((t) => matchesTrackSearch(t, searchQuery));
@@ -281,15 +285,24 @@ const MainContent: React.FC = () => {
     return findArtistByNameOrId(artists, selectedArtistId);
   }, [selectedArtistId, artists]);
 
-  // Merge custom user albums with catalog playlists so created albums open reliably
+  // Auto-curated vibe & space playlists (used so clicking any Space/Vibe card opens PlaylistDetailView)
+  const autoPlaylists = useMemo(() => {
+    const base = getAutoVibePlaylists(allTracks, 'all');
+    if (activeSpace === 'all') return base;
+    const scoped = getAutoVibePlaylists(filterTracksBySpace(allTracks, activeSpace), activeSpace);
+    return [...scoped, ...base];
+  }, [allTracks, activeSpace]);
+
+  // Merge custom user albums with catalog & auto-vibe playlists so all cards open reliably
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
     return (
       userPlaylists.find((p) => p.id === selectedPlaylistId) ||
       playlists.find((p) => p.id === selectedPlaylistId) ||
+      autoPlaylists.find((p) => p.id === selectedPlaylistId) ||
       null
     );
-  }, [selectedPlaylistId, userPlaylists, playlists]);
+  }, [selectedPlaylistId, userPlaylists, playlists, autoPlaylists]);
 
   const handleSelectArtist = (artist: ArtistProfile) => {
     setSelectedArtistId(artist.id);
@@ -332,6 +345,11 @@ const MainContent: React.FC = () => {
         setCurrentView={setCurrentView}
         selectedPlaylistId={selectedPlaylistId}
         setSelectedPlaylistId={setSelectedPlaylistId}
+        activeSpace={activeSpace}
+        onSelectSpace={(space) => {
+          setActiveSpace(space);
+          setActiveGenre('all');
+        }}
         isMobileOpen={isMobileDrawerOpen}
         onCloseMobile={() => setIsMobileDrawerOpen(false)}
       />
@@ -376,6 +394,8 @@ const MainContent: React.FC = () => {
                     tracks={filteredTracks}
                     playlists={playlists}
                     artists={artists}
+                    activeSpace={activeSpace}
+                    onChangeSpace={setActiveSpace}
                     onSelectPlaylist={(pl) => {
                       setSelectedPlaylistId(pl.id);
                       setCurrentView('playlist');
@@ -433,6 +453,8 @@ const MainContent: React.FC = () => {
                     tracks={filteredTracks}
                     playlists={playlists}
                     artists={artists}
+                    activeSpace={activeSpace}
+                    onChangeSpace={setActiveSpace}
                     onSelectPlaylist={(pl) => {
                       setSelectedPlaylistId(pl.id);
                       setCurrentView('playlist');

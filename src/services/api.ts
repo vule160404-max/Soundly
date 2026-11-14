@@ -7,6 +7,7 @@ import {
   healTrackVietnameseDisplay,
   mergeDuplicateTrackPair,
 } from '../utils/trackDedupe';
+import { detectTrackRegion, matchesGenreFilter } from '../utils/musicSpaces';
 
 export interface AIClassifyInput {
   id: string;
@@ -20,6 +21,7 @@ export interface AIClassifyInput {
 export interface AIClassifyResult {
   id: string;
   genre: string;
+  region?: 'vn' | 'us-uk' | 'kpop' | 'other';
   mood: string;
   bpm: number;
   suggestedTitle: string;
@@ -128,6 +130,7 @@ const ALLOWED_FIRESTORE_TRACK_KEYS: Array<keyof Track> = [
   'lyrics',
   'bpm',
   'mood',
+  'region',
   'plays',
   'aiClassified',
   'aiReason',
@@ -165,6 +168,14 @@ function sanitizeTrackForFirestore(track: Track): Record<string, unknown> {
   }
   if (typeof track.bpm === 'number' && Number.isFinite(track.bpm)) out.bpm = track.bpm;
   if (track.mood !== undefined) out.mood = String(track.mood).slice(0, 150);
+  if (
+    track.region === 'vn' ||
+    track.region === 'us-uk' ||
+    track.region === 'kpop' ||
+    track.region === 'other'
+  ) {
+    out.region = track.region;
+  }
   if (typeof track.plays === 'number' && Number.isFinite(track.plays)) out.plays = track.plays;
   if (typeof track.aiClassified === 'boolean') out.aiClassified = track.aiClassified;
   if (track.aiReason !== undefined) out.aiReason = String(track.aiReason).slice(0, 500);
@@ -280,6 +291,7 @@ export const musicApi = {
               merged.artist !== existing.artist ||
               merged.album !== existing.album ||
               merged.genre !== existing.genre ||
+              merged.region !== existing.region ||
               merged.mood !== existing.mood ||
               merged.aiClassified !== existing.aiClassified ||
               Boolean(merged.id3Checked) !== Boolean(existing.id3Checked) ||
@@ -346,7 +358,7 @@ export const musicApi = {
     // Filter by genre
     let results = allTracks;
     if (genre && genre !== 'all') {
-      results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
+      results = results.filter(t => matchesGenreFilter(t, genre));
     }
 
     // Filter by search query
@@ -374,7 +386,7 @@ export const musicApi = {
       const allTracks = await this.getTracks();
       return INITIAL_GENRES.map(g => ({
         ...g,
-        trackCount: allTracks.filter(t => t.genre.toLowerCase() === g.name.toLowerCase()).length,
+        trackCount: allTracks.filter(t => matchesGenreFilter(t, g.name)).length,
       }));
     } catch {
       return INITIAL_GENRES;
@@ -421,23 +433,48 @@ export const musicApi = {
         }
       }
 
+      const healedStub = healTrackVietnameseDisplay({
+        id: item.id,
+        title,
+        artist,
+        album: item.album || '',
+        coverUrl: '',
+        audioUrl: '',
+        duration: item.duration || 210,
+        genre: 'Pop',
+        releaseYear: new Date().getFullYear(),
+        lyrics: [],
+      });
+      title = healedStub.title;
+      artist = healedStub.artist;
+
       const lower = (title + ' ' + artist).toLowerCase();
+      const detectedRegion = detectTrackRegion({
+        title,
+        artist,
+        album: item.album || '',
+        genre: '',
+      });
       let genre = 'Pop';
       if (lower.includes('rap') || lower.includes('hiphop')) genre = 'Hip-Hop';
-      else if (lower.includes('lofi') || lower.includes('chill')) genre = 'Lo-Fi';
-      else if (lower.includes('acoustic')) genre = 'Acoustic';
+      else if (lower.includes('lofi') || lower.includes('chill')) genre = 'Lo-Fi & Chill';
+      else if (lower.includes('acoustic') || lower.includes('ballad')) genre = 'Ballad';
       else if (lower.includes('rock')) genre = 'Rock';
-      else if (lower.includes('edm') || lower.includes('remix')) genre = 'Dance / Electronic';
+      else if (lower.includes('edm') || lower.includes('remix')) genre = 'EDM / Electronic';
       else if (lower.includes('r&b') || lower.includes('soul')) genre = 'R&B';
+      else if (detectedRegion === 'us-uk') genre = 'US-UK';
+      else if (detectedRegion === 'kpop') genre = 'K-Pop';
+      else if (detectedRegion === 'vn') genre = 'V-Pop';
 
       return {
         id: item.id,
         genre,
-        mood: 'Thư giãn & Dễ chịu',
+        region: detectedRegion,
+        mood: detectedRegion === 'us-uk' ? 'Quốc tế & Cuốn hút' : 'Thư giãn & Dễ chịu',
         bpm: 110,
         suggestedTitle: title,
         suggestedArtist: artist,
-        reason: 'Phân loại tự động thông minh Soundly AI.',
+        reason: 'Phân loại tự động thận trọng theo nguồn gốc xác thực Soundly AI.',
       };
     });
   },
@@ -451,6 +488,7 @@ export const musicApi = {
       audioUrl: string;
       coverUrl?: string;
       genre?: string;
+      region?: 'vn' | 'us-uk' | 'kpop' | 'other';
       duration?: number;
       bpm?: number;
       mood?: string;
@@ -493,6 +531,7 @@ export const musicApi = {
           '/assets/aistudio/soundly-default-cover.svg',
         duration: t.duration || 210,
         genre: t.genre || 'Pop',
+        ...(t.region ? { region: t.region } : {}),
         releaseYear: new Date().getFullYear(),
         bpm: t.bpm || 110,
         mood: t.mood || 'Thư giãn',

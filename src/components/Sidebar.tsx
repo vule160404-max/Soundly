@@ -12,17 +12,21 @@ import {
   ShieldCheck,
   X,
   Disc3,
-  Mic2
+  Mic2,
+  Globe
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
 import { Playlist } from '../types/music';
+import { MusicSpaceId } from '../utils/musicSpaces';
 
 interface SidebarProps {
   currentView: string;
   setCurrentView: (view: string) => void;
   selectedPlaylistId: string | null;
   setSelectedPlaylistId: (id: string | null) => void;
+  activeSpace?: MusicSpaceId;
+  onSelectSpace?: (space: MusicSpaceId) => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
 }
@@ -32,6 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setCurrentView,
   selectedPlaylistId,
   setSelectedPlaylistId,
+  activeSpace = 'all',
+  onSelectSpace,
   isMobileOpen = false,
   onCloseMobile
 }) => {
@@ -108,15 +114,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Links */}
         <div className="space-y-1 pt-1">
           <button
-            onClick={() => navigateTo('home')}
+            onClick={() => {
+              onSelectSpace?.('all');
+              navigateTo('home');
+            }}
             className={`w-full flex items-center gap-3.5 px-2.5 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
-              currentView === 'home'
+              currentView === 'home' && activeSpace !== 'us-uk'
                 ? 'text-[#f7f5f0] bg-[#162047]'
                 : 'text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#131c3d]'
             }`}
           >
-            <Home className={`w-5 h-5 shrink-0 ${currentView === 'home' ? 'text-[#f47b64]' : ''}`} />
+            <Home
+              className={`w-5 h-5 shrink-0 ${
+                currentView === 'home' && activeSpace !== 'us-uk' ? 'text-[#f47b64]' : ''
+              }`}
+            />
             <span>Trang chủ</span>
+          </button>
+
+          <button
+            onClick={() => {
+              onSelectSpace?.('us-uk');
+              navigateTo('home');
+            }}
+            className={`w-full flex items-center gap-3.5 px-2.5 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+              currentView === 'home' && activeSpace === 'us-uk'
+                ? 'text-[#f7f5f0] bg-[#162047]'
+                : 'text-[#a3aed0] hover:text-[#f7f5f0] hover:bg-[#131c3d]'
+            }`}
+          >
+            <Globe
+              className={`w-5 h-5 shrink-0 ${
+                currentView === 'home' && activeSpace === 'us-uk' ? 'text-[#f47b64]' : ''
+              }`}
+            />
+            <span>Không gian US-UK</span>
           </button>
 
           <button

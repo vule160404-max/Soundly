@@ -14,6 +14,7 @@ import {
   deduplicateTracksList,
   healTrackVietnameseDisplay,
 } from './src/utils/trackDedupe';
+import { matchesGenreFilter } from './src/utils/musicSpaces';
 import multer from 'multer';
 import {
   loadR2Config,
@@ -314,7 +315,7 @@ async function startServer() {
     results = deduplicateTracksList(results).deduped;
 
     if (genre && typeof genre === 'string' && genre !== 'all') {
-      results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
+      results = results.filter(t => matchesGenreFilter(t, genre));
     }
 
     if (q && typeof q === 'string' && q.trim()) {
@@ -411,6 +412,9 @@ async function startServer() {
           'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
         duration: item.duration || 210,
         genre: item.genre || 'Pop',
+        ...(item.region === 'vn' || item.region === 'us-uk' || item.region === 'kpop' || item.region === 'other'
+          ? { region: item.region }
+          : {}),
         releaseYear: new Date().getFullYear(),
         bpm: item.bpm || 110,
         mood: item.mood || 'Thư giãn',
@@ -529,11 +533,12 @@ async function startServer() {
   app.patch('/api/tracks/:id', async (req, res) => {
     const { id } = req.params;
     const idx = tracks.findIndex(t => t.id === id);
-    const { title, artist, genre, mood, bpm, aiClassified, aiReason, lyrics } = req.body;
+    const { title, artist, genre, region, mood, bpm, aiClassified, aiReason, lyrics } = req.body;
     const patch = {
       ...(title !== undefined ? { title } : {}),
       ...(artist !== undefined ? { artist } : {}),
       ...(genre !== undefined ? { genre } : {}),
+      ...(region !== undefined ? { region } : {}),
       ...(mood !== undefined ? { mood } : {}),
       ...(bpm !== undefined ? { bpm } : {}),
       ...(aiClassified !== undefined ? { aiClassified } : {}),
@@ -595,10 +600,16 @@ async function startServer() {
     res.status(201).json(newPlaylist);
   });
 
-  app.get('/api/genres', (_req, res) => {
+  app.get('/api/genres', async (_req, res) => {
+    let catalog: Track[] = [...tracks];
+    if (isR2Configured()) {
+      const r2Tracks = await getR2CatalogTracks();
+      catalog = [...catalog, ...(r2Tracks as unknown as Track[])];
+    }
+    catalog = deduplicateTracksList(catalog).deduped;
     const dynamicGenres = INITIAL_GENRES.map(g => ({
       ...g,
-      trackCount: tracks.filter(t => t.genre.toLowerCase() === g.name.toLowerCase()).length,
+      trackCount: catalog.filter(t => matchesGenreFilter(t, g.name)).length,
     }));
     res.json(dynamicGenres);
   });

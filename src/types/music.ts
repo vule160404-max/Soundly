@@ -19,6 +19,7 @@ export interface Track {
   plays?: number;
   aiClassified?: boolean;
   aiReason?: string;
+  region?: 'vn' | 'us-uk' | 'kpop' | 'other';
   spotifyTrackId?: string;
   spotifyUrl?: string;
   r2AudioKey?: string;

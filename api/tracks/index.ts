@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { getR2CatalogTracks } from '../_lib/r2.js';
+import { matchesTrackGenreFilter } from '../_lib/ai.js';
 import { sendJson } from '../_utils.js';
 
 export default async function handler(
@@ -20,9 +21,7 @@ export default async function handler(
     let results = await getR2CatalogTracks();
 
     if (genre && genre !== 'all') {
-      results = results.filter(
-        t => t.genre.toLowerCase() === genre.toLowerCase()
-      );
+      results = results.filter(t => matchesTrackGenreFilter(t, genre));
     }
 
     if (q) {

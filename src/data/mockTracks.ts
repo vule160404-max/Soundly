@@ -10,6 +10,7 @@ export const INITIAL_PLAYLISTS: Playlist[] = [];
 export const INITIAL_GENRES: GenreCategory[] = [
   { id: 'pop', name: 'Pop', accentColor: 'bg-[#8400e7] text-white', iconName: 'Sparkles', trackCount: 0 },
   { id: 'v-pop', name: 'V-Pop', accentColor: 'bg-[#e91429] text-white', iconName: 'Music', trackCount: 0 },
+  { id: 'us-uk', name: 'US-UK', accentColor: 'bg-[#1d4ed8] text-white', iconName: 'Globe', trackCount: 0 },
   { id: 'hip-hop', name: 'Hip-Hop', accentColor: 'bg-[#e13300] text-white', iconName: 'Mic2', trackCount: 0 },
   { id: 'rnb', name: 'R&B', accentColor: 'bg-[#1e3264] text-white', iconName: 'Heart', trackCount: 0 },
   { id: 'rock', name: 'Rock', accentColor: 'bg-[#b02897] text-white', iconName: 'Flame', trackCount: 0 },

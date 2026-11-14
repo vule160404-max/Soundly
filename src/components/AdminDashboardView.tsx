@@ -36,6 +36,7 @@ import {
   findDuplicateTrack,
   isR2AudioUrl,
   isRawSlugDisplayText,
+  isUnaccentedVietnameseSuspicion,
 } from '../utils/trackDedupe';
 
 interface AdminDashboardViewProps {
@@ -59,6 +60,7 @@ interface StagedFile {
   artist: string;
   album: string;
   genre: string;
+  region?: Track['region'];
   mood?: string;
   bpm?: number;
   aiClassified: boolean;
@@ -140,6 +142,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   const isNameErrorTrack = (t: Track) => {
     if (isRawSlugDisplayText(t.title) || isRawSlugDisplayText(t.artist)) {
+      return true;
+    }
+    if (isUnaccentedVietnameseSuspicion(t)) {
       return true;
     }
     return (
@@ -334,6 +339,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             title: ai.suggestedTitle || item.title,
             artist: ai.suggestedArtist || item.artist,
             genre: ai.genre,
+            ...(ai.region ? { region: ai.region } : {}),
             mood: ai.mood,
             bpm: ai.bpm,
             aiClassified: true,
@@ -604,6 +610,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             r2AudioKey,
             r2CoverKey: enriched?.r2CoverKey || existingMatch?.r2CoverKey,
             genre: item.genre || existingMatch?.genre,
+            region: item.region || existingMatch?.region,
             duration: item.duration || enriched?.duration || existingMatch?.duration,
             bpm: item.bpm ?? existingMatch?.bpm,
             mood: item.mood || existingMatch?.mood,
@@ -715,6 +722,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             ...(ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
             ...(ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
             genre: ai.genre,
+            ...(ai.region ? { region: ai.region } : {}),
             mood: ai.mood,
             bpm: ai.bpm,
             aiClassified: true,

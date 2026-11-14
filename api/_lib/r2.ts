@@ -34,6 +34,7 @@ export interface R2StoredTrack {
   audioUrl: string;
   duration: number;
   genre: string;
+  region?: 'vn' | 'us-uk' | 'kpop' | 'other';
   releaseYear: number;
   lyrics: Array<{ time: number; text: string }>;
   bpm?: number;

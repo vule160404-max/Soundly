@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { Music, Sparkles, Mic2, ArrowRight } from 'lucide-react';
+import { Music, Sparkles, Mic2, ArrowRight, Globe } from 'lucide-react';
 import { Track, GenreCategory, ArtistProfile } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
 import { normalizeSearchText } from '../utils/artistSync';
+import { matchesGenreFilter } from '../utils/musicSpaces';
 
 interface ExploreViewProps {
   tracks: Track[];
@@ -31,7 +32,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   const filteredTracks =
     activeGenre === 'all'
       ? tracks
-      : tracks.filter(t => t.genre.toLowerCase() === activeGenre.toLowerCase());
+      : tracks.filter(t => matchesGenreFilter(t, activeGenre));
 
   const matchingArtists = useMemo(() => {
     const q = normalizeSearchText(searchQuery);
@@ -46,6 +47,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
     const colors = [
       'bg-[#1e3264]', // Navy Blue
       'bg-[#c4513d]', // Warm Terracotta Coral
+      'bg-[#16427a]', // Atlantic Blue (US-UK)
       'bg-[#3d2c6d]', // Royal Indigo
       'bg-[#1b4965]', // Nordic Teal
       'bg-[#7b2cbf]', // Deep Violet
@@ -71,7 +73,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
               : 'Duyệt tìm tất cả'}
           </h2>
           <p className="text-xs sm:text-sm text-[#a3aed0] mt-1">
-            Khám phá 12 thể loại âm nhạc và danh sách nghệ sĩ trên Soundly.
+            Khám phá {genres.length} thể loại âm nhạc Việt Nam, US-UK và danh sách nghệ sĩ trên Soundly.
           </p>
         </div>
 
@@ -143,10 +145,9 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
 
         {genres.map((genre, idx) => {
           const isSelected = activeGenre.toLowerCase() === genre.name.toLowerCase();
-          const count = tracks.filter(
-            t => t.genre.toLowerCase() === genre.name.toLowerCase()
-          ).length;
+          const count = tracks.filter(t => matchesGenreFilter(t, genre.name)).length;
           const bgClass = getCardBg(idx);
+          const isUsUk = genre.id === 'us-uk';
 
           return (
             <button
@@ -156,13 +157,24 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                 isSelected ? 'ring-2 ring-[#f47b64]' : 'md:hover:scale-[1.02]'
               }`}
             >
-              <span className="text-base font-bold tracking-tight leading-snug pr-4">
-                {genre.name}
-              </span>
+              <div>
+                <span className="text-base font-bold tracking-tight leading-snug pr-4 block">
+                  {isUsUk ? 'US-UK' : genre.name}
+                </span>
+                {isUsUk && (
+                  <span className="text-[11px] text-[#d6e4ff] font-medium block mt-0.5">
+                    Nhạc Quốc Tế
+                  </span>
+                )}
+              </div>
               <div className="text-xs opacity-85 font-medium tabular-nums">
                 {count} bài hát
               </div>
-              <Music className="w-16 h-16 absolute -right-2 -bottom-2 opacity-25 transform rotate-12 group-hover:scale-110 transition-transform" />
+              {isUsUk ? (
+                <Globe className="w-16 h-16 absolute -right-2 -bottom-2 opacity-25 transform rotate-12 group-hover:scale-110 transition-transform" />
+              ) : (
+                <Music className="w-16 h-16 absolute -right-2 -bottom-2 opacity-25 transform rotate-12 group-hover:scale-110 transition-transform" />
+              )}
             </button>
           );
         })}
@@ -172,7 +184,11 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
       <section>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold text-[#f7f5f0] tracking-tight">
-            {activeGenre === 'all' ? 'Tất cả bài hát' : `Thể loại: ${activeGenre}`}
+            {activeGenre === 'all'
+              ? 'Tất cả bài hát'
+              : activeGenre === 'US-UK'
+                ? 'Không gian & Thể loại: US-UK (Nhạc Nước Ngoài)'
+                : `Thể loại: ${activeGenre}`}
           </h3>
           <span className="text-xs text-[#a3aed0] font-mono tabular-nums">
             {filteredTracks.length} bài hát
