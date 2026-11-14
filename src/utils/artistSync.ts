@@ -1,7 +1,10 @@
 import { ArtistProfile, Track } from '../types/music';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
 
-const DEFAULT_COVER_FRAGMENT = 'photo-1511671782779-c97d3d27a1d4';
+const DEFAULT_COVER_FRAGMENTS = [
+  'photo-1511671782779-c97d3d27a1d4',
+  'soundly-default-cover.svg',
+];
 
 const ARTIST_ACCENT_GRADIENTS = [
   'from-[#243b8a] via-[#131d47] to-[#0d142c]',
@@ -23,12 +26,65 @@ export function normalizeSearchText(input: string): string {
     .trim();
 }
 
+/**
+ * Unifies Vietnamese old-style vs new-style tone placement on diphthongs
+ * (e.g., "Hoà" <-> "Hòa", "Thuỳ" <-> "Thùy", "Thuý" <-> "Thúy", "Khoẻ" <-> "Khỏe")
+ * so artist variants always map to the same key.
+ */
+function normalizeVietnameseTonePlacement(lowerNfc: string): string {
+  return lowerNfc
+    .replace(/oà/g, 'òa')
+    .replace(/oá/g, 'óa')
+    .replace(/oả/g, 'ỏa')
+    .replace(/oã/g, 'õa')
+    .replace(/oạ/g, 'ọa')
+    .replace(/oè/g, 'òe')
+    .replace(/oé/g, 'óe')
+    .replace(/oẻ/g, 'ỏe')
+    .replace(/oẽ/g, 'õe')
+    .replace(/oẹ/g, 'ọe')
+    .replace(/qùy/g, 'quỳ')
+    .replace(/qúy/g, 'quý')
+    .replace(/qủy/g, 'quỷ')
+    .replace(/qũy/g, 'quỹ')
+    .replace(/qụy/g, 'quỵ')
+    .replace(/(^|[^q])uỳ/g, '$1ùy')
+    .replace(/(^|[^q])uý/g, '$1úy')
+    .replace(/(^|[^q])uỷ/g, '$1ủy')
+    .replace(/(^|[^q])uỹ/g, '$1ũy')
+    .replace(/(^|[^q])uỵ/g, '$1ụy');
+}
+
 export function normalizeArtistKey(name: string): string {
-  return (name || '')
+  const cleaned = (name || '')
+    .replace(/[\u200B-\u200D\uFEFF\u00AD]/g, '')
+    .replace(/[\u00A0\s]+/g, ' ')
+    .replace(/[’‘`]/g, "'")
+    .replace(/[–—]/g, '-')
     .normalize('NFC')
     .toLowerCase()
+    .replace(/\./g, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+  return normalizeVietnameseTonePlacement(cleaned);
+}
+
+function getPunctuationKeys(name: string): [string, string] {
+  const base = normalizeArtistKey(name);
+  const removed = base
+    .replace(/[-_'"()]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const spaced = base
+    .replace(/[-_'"()]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return [removed, spaced];
+}
+
+function hasVietnameseDiacritics(name: string): boolean {
+  return /[^\u0000-\u007f]/.test(name || '');
 }
 
 function isPlaceholderArtist(name: string): boolean {
@@ -112,19 +168,34 @@ function pickCanonicalName(variants: Map<string, number>): string {
   let bestScore = -1;
 
   for (const [name, count] of variants.entries()) {
-    const hasUpper = /[A-ZÀ-Ỹ]/.test(name) ? 1 : 0;
-    const score = count * 10 + hasUpper;
+    const trimmed = name.normalize('NFC').trim();
+    const hasDiacritics = hasVietnameseDiacritics(trimmed) ? 1 : 0;
+    const hasUpper = /[A-ZÀ-Ỹ]/.test(trimmed) ? 1 : 0;
+    const usesModernTone =
+      /(?:òa|óa|ỏa|õa|ọa|òe|óe|ỏe|õe|ọe|ùy|úy|ủy|ũy|ụy)/i.test(trimmed)
+        ? 1
+        : 0;
+    const score =
+      hasDiacritics * 500 +
+      hasUpper * 50 +
+      count * 10 +
+      usesModernTone;
     if (score > bestScore) {
       bestScore = score;
-      bestName = name;
+      bestName = trimmed;
     }
   }
 
   return bestName || 'Nghệ sĩ chưa rõ';
 }
 
+function isDefaultCoverUrl(url?: string): boolean {
+  if (!url) return true;
+  return DEFAULT_COVER_FRAGMENTS.some(fragment => url.includes(fragment));
+}
+
 function isCustomCover(url?: string): boolean {
-  return Boolean(url && !url.includes(DEFAULT_COVER_FRAGMENT));
+  return Boolean(url && !isDefaultCoverUrl(url));
 }
 
 export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
@@ -134,14 +205,43 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
     soloCustomCovers: string[];
     anyCustomCovers: string[];
     fallbackCovers: string[];
-    collaborators: Set<string>;
+    collaborators: Map<string, string>;
     genres: Set<string>;
     albums: Set<string>;
     totalPlays: number;
     totalDuration: number;
   }
 
-  const buckets = new Map<string, Bucket>();
+  const mergeBuckets = (target: Bucket, source: Bucket) => {
+    for (const [variant, count] of source.variants.entries()) {
+      target.variants.set(variant, (target.variants.get(variant) || 0) + count);
+    }
+    for (const [trackId, track] of source.tracksMap.entries()) {
+      if (!target.tracksMap.has(trackId)) {
+        target.tracksMap.set(trackId, track);
+        target.totalPlays += track.plays || 0;
+        target.totalDuration += track.duration || 0;
+      }
+    }
+    for (const url of source.soloCustomCovers) {
+      if (!target.soloCustomCovers.includes(url)) target.soloCustomCovers.push(url);
+    }
+    for (const url of source.anyCustomCovers) {
+      if (!target.anyCustomCovers.includes(url)) target.anyCustomCovers.push(url);
+    }
+    for (const url of source.fallbackCovers) {
+      if (!target.fallbackCovers.includes(url)) target.fallbackCovers.push(url);
+    }
+    for (const [collabKey, collabName] of source.collaborators.entries()) {
+      if (!target.collaborators.has(collabKey)) {
+        target.collaborators.set(collabKey, collabName);
+      }
+    }
+    for (const g of source.genres) target.genres.add(g);
+    for (const a of source.albums) target.albums.add(a);
+  };
+
+  const rawBuckets = new Map<string, Bucket>();
 
   for (const track of tracks) {
     const artistNames = splitArtistNames(track.artist, track.title);
@@ -149,7 +249,7 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
 
     for (const artistName of artistNames) {
       const key = normalizeArtistKey(artistName);
-      let bucket = buckets.get(key);
+      let bucket = rawBuckets.get(key);
       if (!bucket) {
         bucket = {
           variants: new Map(),
@@ -157,13 +257,13 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
           soloCustomCovers: [],
           anyCustomCovers: [],
           fallbackCovers: [],
-          collaborators: new Set(),
+          collaborators: new Map(),
           genres: new Set(),
           albums: new Set(),
           totalPlays: 0,
           totalDuration: 0,
         };
-        buckets.set(key, bucket);
+        rawBuckets.set(key, bucket);
       }
 
       bucket.variants.set(artistName, (bucket.variants.get(artistName) || 0) + 1);
@@ -178,18 +278,83 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
 
         if (track.coverUrl) {
           if (isCustomCover(track.coverUrl)) {
-            if (isSolo) bucket.soloCustomCovers.push(track.coverUrl);
-            bucket.anyCustomCovers.push(track.coverUrl);
-          } else {
+            if (isSolo && !bucket.soloCustomCovers.includes(track.coverUrl)) {
+              bucket.soloCustomCovers.push(track.coverUrl);
+            }
+            if (!bucket.anyCustomCovers.includes(track.coverUrl)) {
+              bucket.anyCustomCovers.push(track.coverUrl);
+            }
+          } else if (!bucket.fallbackCovers.includes(track.coverUrl)) {
             bucket.fallbackCovers.push(track.coverUrl);
           }
         }
       }
 
       for (const other of artistNames) {
-        if (normalizeArtistKey(other) !== key && !isPlaceholderArtist(other)) {
-          bucket.collaborators.add(other);
+        const otherKey = normalizeArtistKey(other);
+        if (otherKey !== key && !isPlaceholderArtist(other)) {
+          if (!bucket.collaborators.has(otherKey)) {
+            bucket.collaborators.set(otherKey, other);
+          }
         }
+      }
+    }
+  }
+
+  // Pass 2: Merge punctuation/hyphen variants that keep identical accented letters
+  // (e.g. "Sơn Tùng M-TP" + "Sơn Tùng MTP", "B-Ray" + "B Ray")
+  const punctMergedBuckets = new Map<string, Bucket>();
+  const punctLookup = new Map<string, string>();
+
+  for (const [key, bucket] of rawBuckets.entries()) {
+    const sampleName = pickCanonicalName(bucket.variants);
+    const [removedKey, spacedKey] = getPunctuationKeys(sampleName);
+    const existingTargetKey =
+      punctLookup.get(removedKey) || punctLookup.get(spacedKey);
+    if (existingTargetKey && punctMergedBuckets.has(existingTargetKey)) {
+      mergeBuckets(punctMergedBuckets.get(existingTargetKey)!, bucket);
+      punctLookup.set(removedKey, existingTargetKey);
+      punctLookup.set(spacedKey, existingTargetKey);
+    } else {
+      punctLookup.set(removedKey, key);
+      punctLookup.set(spacedKey, key);
+      punctMergedBuckets.set(key, bucket);
+    }
+  }
+
+  // Pass 3: Merge unambiguous unaccented ASCII buckets (e.g. "Hoa Minzy", "Dat G", "buitruonglinh")
+  // into their single matching accented Vietnamese bucket ("Hòa Minzy", "Đạt G", "Bùi Trường Linh")
+  const accentedEntries: Array<{ key: string; asciiNorm: string; compactAscii: string }> = [];
+  for (const [key, bucket] of punctMergedBuckets.entries()) {
+    const canonical = pickCanonicalName(bucket.variants);
+    if (hasVietnameseDiacritics(canonical)) {
+      const asciiNorm = normalizeSearchText(canonical).replace(/[-_.'’]+/g, ' ').replace(/\s+/g, ' ').trim();
+      accentedEntries.push({
+        key,
+        asciiNorm,
+        compactAscii: asciiNorm.replace(/\s+/g, ''),
+      });
+    }
+  }
+
+  const buckets = new Map<string, Bucket>(punctMergedBuckets);
+  for (const [key, bucket] of punctMergedBuckets.entries()) {
+    const canonical = pickCanonicalName(bucket.variants);
+    if (hasVietnameseDiacritics(canonical) || isPlaceholderArtist(canonical)) continue;
+
+    const asciiNorm = normalizeSearchText(canonical).replace(/[-_.'’]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const compactAscii = asciiNorm.replace(/\s+/g, '');
+
+    let matches = accentedEntries.filter(entry => entry.asciiNorm === asciiNorm);
+    if (matches.length === 0 && !asciiNorm.includes(' ') && compactAscii.length >= 6) {
+      matches = accentedEntries.filter(entry => entry.compactAscii === compactAscii);
+    }
+
+    if (matches.length === 1) {
+      const targetBucket = buckets.get(matches[0].key);
+      if (targetBucket && targetBucket !== bucket) {
+        mergeBuckets(targetBucket, bucket);
+        buckets.delete(key);
       }
     }
   }
@@ -199,6 +364,7 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
 
   for (const [normalizedKey, bucket] of buckets.entries()) {
     const canonicalName = pickCanonicalName(bucket.variants);
+    const selfNormKey = normalizeArtistKey(canonicalName);
     let id = `artist-${slugifyArtist(canonicalName)}`;
     if (usedIds.has(id)) {
       id = `${id}-${hashString(normalizedKey).toString(36).slice(0, 4)}`;
@@ -210,14 +376,17 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
       bucket.anyCustomCovers[0] ||
       bucket.fallbackCovers[0] ||
       '';
-    const isDefaultAvatar =
-      !avatarUrl || avatarUrl.includes(DEFAULT_COVER_FRAGMENT);
+    const isDefaultAvatar = isDefaultCoverUrl(avatarUrl);
 
     const sortedTracks = Array.from(bucket.tracksMap.values()).sort(
       (a, b) => (b.plays || 0) - (a.plays || 0)
     );
 
     const gradientIdx = hashString(normalizedKey) % ARTIST_ACCENT_GRADIENTS.length;
+
+    const dedupedCollaborators = Array.from(bucket.collaborators.entries())
+      .filter(([collabKey]) => collabKey !== normalizedKey && collabKey !== selfNormKey)
+      .map(([, collabName]) => collabName);
 
     artists.push({
       id,
@@ -231,7 +400,7 @@ export function buildArtistDirectory(tracks: Track[]): ArtistProfile[] {
       totalDuration: bucket.totalDuration,
       genres: Array.from(bucket.genres),
       albums: Array.from(bucket.albums),
-      collaborators: Array.from(bucket.collaborators),
+      collaborators: dedupedCollaborators,
       accentGradient: ARTIST_ACCENT_GRADIENTS[gradientIdx],
     });
   }
@@ -256,8 +425,22 @@ export function findArtistByNameOrId(
   if (byId) return byId;
 
   const targetKey = normalizeArtistKey(nameOrId);
-  const byExactKey = artists.find(a => a.normalizedKey === targetKey);
+  const byExactKey = artists.find(
+    a => a.normalizedKey === targetKey || normalizeArtistKey(a.name) === targetKey
+  );
   if (byExactKey) return byExactKey;
+
+  const [punctRemoved, punctSpaced] = getPunctuationKeys(nameOrId);
+  const byPunctKey = artists.find(a => {
+    const [candRemoved, candSpaced] = getPunctuationKeys(a.name);
+    return (
+      candRemoved === punctRemoved ||
+      candSpaced === punctSpaced ||
+      candRemoved === punctSpaced ||
+      candSpaced === punctRemoved
+    );
+  });
+  if (byPunctKey) return byPunctKey;
 
   const accentNormalized = normalizeSearchText(nameOrId);
   const byAccent = artists.find(
@@ -269,7 +452,11 @@ export function findArtistByNameOrId(
   const split = splitArtistNames(nameOrId);
   if (split.length > 0 && split[0] !== nameOrId) {
     const firstKey = normalizeArtistKey(split[0]);
-    return artists.find(a => a.normalizedKey === firstKey) || null;
+    return (
+      artists.find(
+        a => a.normalizedKey === firstKey || normalizeArtistKey(a.name) === firstKey
+      ) || null
+    );
   }
 
   return null;

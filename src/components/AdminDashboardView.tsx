@@ -139,7 +139,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const expiredSourceTracks = tracks.filter(t => isExpiredExternalTrack(t.audioUrl));
 
   const isNameErrorTrack = (t: Track) => {
-    return isRawSlugDisplayText(t.title) || isRawSlugDisplayText(t.artist);
+    if (isRawSlugDisplayText(t.title) || isRawSlugDisplayText(t.artist)) {
+      return true;
+    }
+    return (
+      !t.id3Checked &&
+      !t.aiClassified &&
+      t.aiReason === 'Khôi phục tự động từ Cloudflare R2' &&
+      !/[^\u0000-\u007f]/.test(t.title || '')
+    );
   };
 
   // Batch upload state (FILES ONLY, NO URLS!)

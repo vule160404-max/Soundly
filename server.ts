@@ -33,6 +33,7 @@ import {
   incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
   getR2ObjectRange,
+  backfillR2CatalogId3Metadata,
 } from './server-r2';
 import crypto from 'node:crypto';
 import {
@@ -287,6 +288,18 @@ async function startServer() {
       const msg = err instanceof Error ? err.message : 'Failed to stream R2 object';
       const status = msg.includes('Forbidden') ? 403 : 404;
       res.status(status).json({ error: msg });
+    }
+  });
+
+  app.post('/api/r2/heal-id3', async (req, res) => {
+    try {
+      const limit = Math.min(3000, Math.max(10, Number(req.body?.limit) || 2000));
+      const result = await backfillR2CatalogId3Metadata(limit);
+      res.json({ success: true, ...result });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to backfill ID3 metadata',
+      });
     }
   });
 

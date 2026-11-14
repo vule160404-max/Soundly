@@ -23,6 +23,7 @@ export interface Track {
   spotifyUrl?: string;
   r2AudioKey?: string;
   r2CoverKey?: string;
+  id3Checked?: boolean;
   syncedLyrics?: string;
   plainLyrics?: string;
   lyricsMode?: 'synced' | 'plain' | 'none';

@@ -225,6 +225,22 @@ export const VIETNAMESE_ARTIST_DICTIONARY: Record<string, string> = {
   'minsicko': 'Minsicko',
   'baby-sam': 'Baby Sam',
   'vine': 'Vine',
+  'hoang-yen-chibi': 'Hoàng Yến Chibi',
+  'andree-right-hand': 'Andree Right Hand',
+  'ali-hoang-duong': 'Ali Hoàng Dương',
+  'ho-ngoc-ha': 'Hồ Ngọc Hà',
+  'hang-bingboong': 'Hằng BingBoong',
+  'vu-duy-khanh': 'Vũ Duy Khánh',
+  'doan-hieu': 'Doãn Hiếu',
+  'freak-d': 'Freak D',
+  'masew': 'Masew',
+  'anh-trai-vuot-ngan-chong-gai': 'Anh Trai Vượt Ngàn Chông Gai',
+  '24k-right': '24k.Right',
+  '2pillz': '2Pillz',
+  '7dnight': '7dnight',
+  'ban-nhac': 'Bạn Nhạc.',
+  'thanh-hung': 'Thành Hưng',
+  'hoang-green': 'Hoàng Green',
 };
 
 const VIETNAMESE_TITLE_DICTIONARY: Record<

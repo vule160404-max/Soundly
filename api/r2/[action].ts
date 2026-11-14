@@ -11,6 +11,7 @@ import {
   uploadTempChunkToR2,
   completeChunkedUploadToR2,
   getR2ObjectRange,
+  backfillR2CatalogId3Metadata,
 } from '../_lib/r2.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
@@ -378,6 +379,22 @@ export default async function handler(
         const msg = err instanceof Error ? err.message : 'Failed to stream R2 object';
         const status = msg.includes('Forbidden') ? 403 : 404;
         sendJson(res, status, { error: msg });
+      }
+      return;
+    }
+
+    case 'heal-id3': {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'Method Not Allowed' });
+        return;
+      }
+      try {
+        const result = await backfillR2CatalogId3Metadata(2000);
+        sendJson(res, 200, { success: true, ...result });
+      } catch (err: unknown) {
+        sendJson(res, 500, {
+          error: err instanceof Error ? err.message : 'Failed to backfill ID3 metadata',
+        });
       }
       return;
     }

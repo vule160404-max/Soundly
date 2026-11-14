@@ -45,6 +45,7 @@ export interface R2StoredTrack {
   spotifyUrl?: string;
   r2AudioKey?: string;
   r2CoverKey?: string;
+  id3Checked?: boolean;
   syncedLyrics?: string;
   plainLyrics?: string;
   lyricsMode?: 'synced' | 'plain' | 'none';
@@ -1496,18 +1497,175 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
       return undefined;
     };
 
+    const isUsableId3Value = (val?: string): boolean => {
+      if (!val) return false;
+      const t = val.trim();
+      if (!t || t.includes('\ufffd')) return false;
+      if (isHyphenFilenameSlug(t) || t.includes('_')) return false;
+      const lower = normalizeR2CompareText(t);
+      return Boolean(
+        lower &&
+          lower !== 'nghe si chua ro' &&
+          lower !== 'unknown artist' &&
+          lower !== 'unknown' &&
+          lower !== 'bai hat tren r2'
+      );
+    };
+
+    const probeId3BatchForKeys = async (
+      keys: string[],
+      concurrency: number = 25
+    ): Promise<
+      Map<
+        string,
+        {
+          title?: string;
+          artist?: string;
+          album?: string;
+          durationSec?: number;
+          tagByteSize: number;
+        }
+      >
+    > => {
+      const results = new Map<
+        string,
+        {
+          title?: string;
+          artist?: string;
+          album?: string;
+          durationSec?: number;
+          tagByteSize: number;
+        }
+      >();
+      for (let i = 0; i < keys.length; i += concurrency) {
+        const batch = keys.slice(i, i + concurrency);
+        await Promise.allSettled(
+          batch.map(async key => {
+            probedId3Keys.add(key);
+            const res = await client.send(
+              new GetObjectCommand({
+                Bucket: cfg.bucketName,
+                Key: key,
+                Range: 'bytes=0-49151',
+              }),
+              { abortSignal: AbortSignal.timeout(2000) }
+            );
+            const bytes = await res.Body?.transformToByteArray();
+            if (!bytes || bytes.length < 16) return;
+            const id3 = parseId3TextFramesFromBuffer(Buffer.from(bytes));
+            results.set(key, id3);
+          })
+        );
+      }
+      return results;
+    };
+
+    const applyId3ToTrack = (
+      track: R2StoredTrack,
+      id3: {
+        title?: string;
+        artist?: string;
+        album?: string;
+        durationSec?: number;
+        tagByteSize: number;
+      },
+      audioKey: string
+    ): boolean => {
+      let changed = false;
+      const wasAutoSlug =
+        track.aiReason === 'Khôi phục tự động từ Cloudflare R2' ||
+        !track.aiClassified ||
+        isLikelyRawSlugText(track.title) ||
+        !/[^\u0000-\u007f]/.test(track.title || '');
+
+      if (
+        isUsableId3Value(id3.title) &&
+        id3.title &&
+        (wasAutoSlug || hasVietnameseDiacriticsOrProperCase(id3.title)) &&
+        id3.title.trim() !== track.title
+      ) {
+        track.title = id3.title.trim();
+        changed = true;
+      }
+
+      const wasArtistMissingOrAuto =
+        track.artist === 'Nghệ sĩ chưa rõ' ||
+        isLikelyRawSlugText(track.artist) ||
+        wasAutoSlug;
+
+      if (
+        isUsableId3Value(id3.artist) &&
+        id3.artist &&
+        (wasArtistMissingOrAuto || hasVietnameseDiacriticsOrProperCase(id3.artist)) &&
+        id3.artist.trim() !== track.artist
+      ) {
+        track.artist = id3.artist.trim();
+        changed = true;
+      }
+
+      if (
+        isUsableId3Value(id3.album) &&
+        id3.album &&
+        (track.album === 'Kho nhạc Cloudflare R2' || !track.album)
+      ) {
+        track.album = id3.album.trim();
+        changed = true;
+      }
+
+      if (id3.durationSec && id3.durationSec > 30 && track.duration !== id3.durationSec) {
+        track.duration = id3.durationSec;
+        changed = true;
+      }
+
+      if (!track.coverUrl || track.coverUrl === DEFAULT_COVER_URL) {
+        const matchedCover = findMatchingCoverInR2(audioKey, track.title, track.artist);
+        if (matchedCover) {
+          track.coverUrl = matchedCover;
+          changed = true;
+        }
+      }
+
+      if (!track.id3Checked) {
+        track.id3Checked = true;
+        changed = true;
+      }
+      return changed;
+    };
+
+    // Immediately probe ID3 tags for newly uploaded R2 MP3s before saving manifest
+    const missingId3Map =
+      missingObjects.length > 0
+        ? await probeId3BatchForKeys(
+            missingObjects.slice(0, 400).map(item => item.key),
+            25
+          )
+        : new Map();
+
     const recoveredTracks: R2StoredTrack[] = [];
     for (const item of missingObjects) {
       const publicUrl = buildR2PublicUrl(cfg, item.key);
       const meta = parseTrackMetaFromKey(item.key, artistDict);
       const histMatch = lookupHistoryByKeyOrText(item.key, meta.title, meta.artist);
-      const finalTitle = histMatch?.title || meta.title;
-      const finalArtist = histMatch?.artist || meta.artist;
-      const finalAlbum = histMatch?.album || 'Kho nhạc Cloudflare R2';
+      const id3 = missingId3Map.get(item.key);
+
+      const finalTitle =
+        (id3 && isUsableId3Value(id3.title) ? id3.title!.trim() : '') ||
+        histMatch?.title ||
+        meta.title;
+      const finalArtist =
+        (id3 && isUsableId3Value(id3.artist) ? id3.artist!.trim() : '') ||
+        histMatch?.artist ||
+        meta.artist;
+      const finalAlbum =
+        (id3 && isUsableId3Value(id3.album) ? id3.album!.trim() : '') ||
+        histMatch?.album ||
+        'Kho nhạc Cloudflare R2';
       const matchedCover =
         findMatchingCoverInR2(item.key, finalTitle, finalArtist) ||
         DEFAULT_COVER_URL;
-      const estimatedDuration = estimateMp3DurationFromSize(item.size);
+      const estimatedDuration =
+        (id3?.durationSec && id3.durationSec > 30 ? id3.durationSec : 0) ||
+        estimateMp3DurationFromSize(item.size, id3?.tagByteSize || 0);
       const safeId = `r2-${item.key
         .replace(/^tracks\//, '')
         .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -1527,6 +1685,7 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
         mood: 'Thư giãn',
         aiClassified: Boolean(meta.genreHint),
         aiReason: 'Khôi phục tự động từ Cloudflare R2',
+        id3Checked: Boolean(id3),
         lyrics: [{ time: 5, text: `Đang phát: ${finalTitle}` }],
         plays: 0,
         r2AudioKey: item.key,
@@ -1607,58 +1766,41 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
     // Single O(N) pass deduplication
     const finalDeduped = deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
 
-    // Optional fast ID3v2 probe (at most 6 unprobed tracks per refresh)
+    // Probe unverified R2 tracks (prioritize newest tracks, unknown artists, and unaccented titles)
     const tracksNeedingId3Probe = finalDeduped
       .filter(t => {
-        if (!isStoredR2Audio(t.audioUrl)) return false;
-        const key = extractR2Key(t.audioUrl);
+        if (t.id3Checked) return false;
+        if (!isStoredR2Audio(t.audioUrl) && !t.r2AudioKey) return false;
+        const key = t.r2AudioKey || extractR2Key(t.audioUrl);
         if (!key || !key.startsWith('tracks/') || probedId3Keys.has(key)) return false;
-        return t.artist === 'Nghệ sĩ chưa rõ' || isLikelyRawSlugText(t.title);
+        return (
+          t.artist === 'Nghệ sĩ chưa rõ' ||
+          isLikelyRawSlugText(t.title) ||
+          isLikelyRawSlugText(t.artist) ||
+          !/[^\u0000-\u007f]/.test(t.title || '')
+        );
       })
-      .slice(0, 6);
+      .reverse()
+      .slice(0, 60);
 
     if (tracksNeedingId3Probe.length > 0) {
-      await Promise.allSettled(
-        tracksNeedingId3Probe.map(async track => {
-          const key = extractR2Key(track.audioUrl);
-          if (!key) return;
-          probedId3Keys.add(key);
-          const res = await client.send(
-            new GetObjectCommand({
-              Bucket: cfg.bucketName,
-              Key: key,
-              Range: 'bytes=0-32767',
-            }),
-            { abortSignal: AbortSignal.timeout(1500) }
-          );
-          const bytes = await res.Body?.transformToByteArray();
-          if (!bytes || bytes.length < 16) return;
-          const id3 = parseId3TextFramesFromBuffer(Buffer.from(bytes));
-          if (id3.title && hasVietnameseDiacriticsOrProperCase(id3.title)) {
-            track.title = id3.title;
+      const keyToTracks = new Map<string, R2StoredTrack[]>();
+      for (const track of tracksNeedingId3Probe) {
+        const key = track.r2AudioKey || extractR2Key(track.audioUrl);
+        if (!key) continue;
+        const list = keyToTracks.get(key) || [];
+        list.push(track);
+        keyToTracks.set(key, list);
+      }
+      const id3Map = await probeId3BatchForKeys(Array.from(keyToTracks.keys()), 20);
+      for (const [key, id3] of id3Map.entries()) {
+        const list = keyToTracks.get(key) || [];
+        for (const track of list) {
+          if (applyId3ToTrack(track, id3, key)) {
             manifestUpdated = true;
           }
-          if (id3.artist && hasVietnameseDiacriticsOrProperCase(id3.artist)) {
-            track.artist = id3.artist;
-            manifestUpdated = true;
-          }
-          if (id3.album && track.album === 'Kho nhạc Cloudflare R2') {
-            track.album = id3.album;
-            manifestUpdated = true;
-          }
-          if (id3.durationSec && id3.durationSec > 30) {
-            track.duration = id3.durationSec;
-            manifestUpdated = true;
-          }
-          if (!track.coverUrl || track.coverUrl === DEFAULT_COVER_URL) {
-            const matchedCover = findMatchingCoverInR2(key, track.title, track.artist);
-            if (matchedCover) {
-              track.coverUrl = matchedCover;
-              manifestUpdated = true;
-            }
-          }
-        })
-      );
+        }
+      }
     }
 
     cachedR2Catalog = finalDeduped;
@@ -1673,6 +1815,101 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
     console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
     return cachedR2Catalog || [];
   }
+}
+
+export async function backfillR2CatalogId3Metadata(
+  maxTracks: number = 2000
+): Promise<{ totalScanned: number; updatedCount: number }> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) {
+    return { totalScanned: 0, updatedCount: 0 };
+  }
+
+  const client = getR2Client(cfg);
+  const current = await getR2CatalogTracks(true);
+  const candidates = current.filter(t => {
+    if (t.id3Checked) return false;
+    const key = t.r2AudioKey || extractR2Key(t.audioUrl);
+    if (!key || !key.startsWith('tracks/')) return false;
+    return (
+      t.artist === 'Nghệ sĩ chưa rõ' ||
+      isLikelyRawSlugText(t.title) ||
+      isLikelyRawSlugText(t.artist) ||
+      !/[^\u0000-\u007f]/.test(t.title || '')
+    );
+  }).slice(-maxTracks);
+
+  let updatedCount = 0;
+  const concurrency = 30;
+  for (let i = 0; i < candidates.length; i += concurrency) {
+    const batch = candidates.slice(i, i + concurrency);
+    await Promise.allSettled(
+      batch.map(async track => {
+        const key = track.r2AudioKey || extractR2Key(track.audioUrl);
+        if (!key) return;
+        const res = await client.send(
+          new GetObjectCommand({
+            Bucket: cfg.bucketName,
+            Key: key,
+            Range: 'bytes=0-49151',
+          }),
+          { abortSignal: AbortSignal.timeout(2500) }
+        );
+        const bytes = await res.Body?.transformToByteArray();
+        if (!bytes || bytes.length < 16) return;
+        const id3 = parseId3TextFramesFromBuffer(Buffer.from(bytes));
+        const hasValidTitle =
+          Boolean(id3.title) &&
+          !isHyphenFilenameSlug(id3.title!) &&
+          !id3.title!.includes('_') &&
+          !id3.title!.includes('\ufffd');
+        const hasValidArtist =
+          Boolean(id3.artist) &&
+          !isHyphenFilenameSlug(id3.artist!) &&
+          !id3.artist!.includes('_') &&
+          !id3.artist!.includes('\ufffd') &&
+          normalizeR2CompareText(id3.artist) !== 'nghe si chua ro';
+
+        let changed = false;
+        const wasAutoSlug =
+          track.aiReason === 'Khôi phục tự động từ Cloudflare R2' ||
+          !track.aiClassified ||
+          isLikelyRawSlugText(track.title) ||
+          !/[^\u0000-\u007f]/.test(track.title || '');
+
+        if (hasValidTitle && id3.title && wasAutoSlug && id3.title.trim() !== track.title) {
+          track.title = id3.title.trim();
+          changed = true;
+        }
+        if (
+          hasValidArtist &&
+          id3.artist &&
+          (wasAutoSlug || track.artist === 'Nghệ sĩ chưa rõ' || isLikelyRawSlugText(track.artist)) &&
+          id3.artist.trim() !== track.artist
+        ) {
+          track.artist = id3.artist.trim();
+          changed = true;
+        }
+        if (id3.album && track.album === 'Kho nhạc Cloudflare R2') {
+          track.album = id3.album.trim();
+          changed = true;
+        }
+        if (id3.durationSec && id3.durationSec > 30 && track.duration !== id3.durationSec) {
+          track.duration = id3.durationSec;
+          changed = true;
+        }
+        track.id3Checked = true;
+        if (changed) updatedCount++;
+      })
+    );
+  }
+
+  if (candidates.length > 0) {
+    const deduped = deduplicateR2TrackList(current);
+    await saveR2CatalogTracks(deduped);
+  }
+
+  return { totalScanned: candidates.length, updatedCount };
 }
 
 export async function getR2CatalogTracks(

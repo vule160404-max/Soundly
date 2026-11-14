@@ -282,6 +282,7 @@ export const musicApi = {
               merged.genre !== existing.genre ||
               merged.mood !== existing.mood ||
               merged.aiClassified !== existing.aiClassified ||
+              Boolean(merged.id3Checked) !== Boolean(existing.id3Checked) ||
               merged.duration !== existing.duration ||
               merged.coverUrl !== existing.coverUrl ||
               merged.audioUrl !== existing.audioUrl ||

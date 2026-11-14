@@ -245,6 +245,22 @@ const CLIENT_VIETNAMESE_ARTIST_MAP: Record<string, string> = {
   'minsicko': 'Minsicko',
   'baby-sam': 'Baby Sam',
   'vine': 'Vine',
+  'hoang-yen-chibi': 'Hoàng Yến Chibi',
+  'andree-right-hand': 'Andree Right Hand',
+  'ali-hoang-duong': 'Ali Hoàng Dương',
+  'ho-ngoc-ha': 'Hồ Ngọc Hà',
+  'hang-bingboong': 'Hằng BingBoong',
+  'vu-duy-khanh': 'Vũ Duy Khánh',
+  'doan-hieu': 'Doãn Hiếu',
+  'freak-d': 'Freak D',
+  'masew': 'Masew',
+  'anh-trai-vuot-ngan-chong-gai': 'Anh Trai Vượt Ngàn Chông Gai',
+  '24k-right': '24k.Right',
+  '2pillz': '2Pillz',
+  '7dnight': '7dnight',
+  'ban-nhac': 'Bạn Nhạc.',
+  'thanh-hung': 'Thành Hưng',
+  'hoang-green': 'Hoàng Green',
 };
 
 const CLIENT_VIETNAMESE_TITLE_MAP: Record<
@@ -700,35 +716,46 @@ export function mergeDuplicateTrackPair(primary: Track, secondary: Track): Track
       ? otherTrack.coverUrl
       : bestAudioTrack.coverUrl || otherTrack.coverUrl;
 
-  const bestTitle = pickBetterDisplayString(bestAudioTrack.title, otherTrack.title);
-  const bestArtist = pickBetterDisplayString(bestAudioTrack.artist, otherTrack.artist);
+  const metaScore = (t: Track) =>
+    (t.aiClassified ? 2 : 0) +
+    (t.id3Checked ? 2 : 0) +
+    (t.aiReason !== 'Khôi phục tự động từ Cloudflare R2' ? 1 : 0);
+
+  const metaPrimary =
+    metaScore(otherTrack) > metaScore(bestAudioTrack) ? otherTrack : bestAudioTrack;
+  const metaSecondary = metaPrimary === bestAudioTrack ? otherTrack : bestAudioTrack;
+
+  const bestTitle = pickBetterDisplayString(metaPrimary.title, metaSecondary.title);
+  const bestArtist = pickBetterDisplayString(metaPrimary.artist, metaSecondary.artist);
   const bestAlbum =
-    bestAudioTrack.album && bestAudioTrack.album !== 'Kho nhạc Cloudflare R2'
-      ? bestAudioTrack.album
-      : otherTrack.album || bestAudioTrack.album;
+    metaPrimary.album && metaPrimary.album !== 'Kho nhạc Cloudflare R2'
+      ? metaPrimary.album
+      : metaSecondary.album || metaPrimary.album;
   const bestDuration =
-    bestAudioTrack.duration && bestAudioTrack.duration !== 210
-      ? bestAudioTrack.duration
-      : otherTrack.duration && otherTrack.duration !== 210
-        ? otherTrack.duration
-        : bestAudioTrack.duration || otherTrack.duration || 210;
+    metaPrimary.duration && metaPrimary.duration !== 210
+      ? metaPrimary.duration
+      : metaSecondary.duration && metaSecondary.duration !== 210
+        ? metaSecondary.duration
+        : metaPrimary.duration || metaSecondary.duration || 210;
   const bestGenre =
-    bestAudioTrack.genre && bestAudioTrack.genre !== 'Pop'
-      ? bestAudioTrack.genre
-      : otherTrack.genre || bestAudioTrack.genre || 'Pop';
+    metaPrimary.genre && metaPrimary.genre !== 'Pop'
+      ? metaPrimary.genre
+      : metaSecondary.genre || metaPrimary.genre || 'Pop';
 
   return {
     ...otherTrack,
     ...bestAudioTrack,
     id: bestAudioTrack.id || otherTrack.id,
-    title: bestTitle || bestAudioTrack.title || otherTrack.title,
-    artist: bestArtist || bestAudioTrack.artist || otherTrack.artist,
+    title: bestTitle || metaPrimary.title || metaSecondary.title,
+    artist: bestArtist || metaPrimary.artist || metaSecondary.artist,
     album: bestAlbum,
     genre: bestGenre,
     duration: bestDuration,
     audioUrl: bestAudioTrack.audioUrl || otherTrack.audioUrl,
     coverUrl: bestCover,
     plays: Math.max(Number(healedPrimary.plays) || 0, Number(healedSecondary.plays) || 0),
+    aiClassified: Boolean(bestAudioTrack.aiClassified || otherTrack.aiClassified),
+    id3Checked: Boolean(bestAudioTrack.id3Checked || otherTrack.id3Checked),
     lyrics: lyricsSource.lyrics || bestAudioTrack.lyrics,
     syncedLyrics: lyricsSource.syncedLyrics || bestAudioTrack.syncedLyrics,
     plainLyrics: lyricsSource.plainLyrics || bestAudioTrack.plainLyrics,
