@@ -124,6 +124,23 @@ function cleanSlugToTitle(slug: string): { title: string; artist: string } {
   return { title, artist };
 }
 
+function sanitizeTrackTitle(track: Track): Track {
+  const title = (track.title || '').trim();
+  const artist = (track.artist || '').trim();
+  const isSlug = title.includes('-') || title.includes('_') || (!/[^\u0000-\u007f]/.test(title) && title === title.toLowerCase());
+  const isPlaceholderArtist = artist === 'Nghệ sĩ chưa rõ' || artist.includes('-') || artist.includes('_');
+
+  if (isSlug || isPlaceholderArtist) {
+    const cleaned = cleanSlugToTitle(title);
+    return {
+      ...track,
+      title: cleaned.title,
+      artist: isPlaceholderArtist || artist === 'Nghệ sĩ chưa rõ' ? cleaned.artist : track.artist,
+    };
+  }
+  return track;
+}
+
 function fallbackClassify(items: ClassifyInputTrack[]): ClassifiedTrackResult[] {
   return items.map(item => {
     const rawName = item.fileName || item.title || 'Bài hát không tên';
@@ -264,13 +281,13 @@ async function startServer() {
   try {
     if (fs.existsSync(UPLOADED_TRACKS_FILE)) {
       const raw = fs.readFileSync(UPLOADED_TRACKS_FILE, 'utf8');
-      uploadedTracks = JSON.parse(raw);
+      uploadedTracks = (JSON.parse(raw) as Track[]).map(sanitizeTrackTitle);
     }
   } catch (e) {
     console.warn('Could not load saved uploaded tracks from disk:', e);
   }
 
-  let tracks: Track[] = [...uploadedTracks, ...INITIAL_TRACKS];
+  let tracks: Track[] = [...uploadedTracks, ...INITIAL_TRACKS].map(sanitizeTrackTitle);
   const playlists: Playlist[] = [...INITIAL_PLAYLISTS];
 
   function persistTracks() {
@@ -500,7 +517,7 @@ async function startServer() {
         }
       }
     }
-    results = deduplicateTracksList(results).deduped;
+    results = deduplicateTracksList(results).deduped.map(sanitizeTrackTitle);
 
     if (genre && typeof genre === 'string' && genre !== 'all') {
       results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
