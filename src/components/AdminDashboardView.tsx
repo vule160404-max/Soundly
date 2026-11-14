@@ -20,6 +20,7 @@ import {
   HardDrive,
   Key,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
@@ -146,6 +147,34 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isReclassifyingCatalog, setIsReclassifyingCatalog] = useState<boolean>(false);
   const [autoSkipDuplicates, setAutoSkipDuplicates] = useState<boolean>(true);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+
+  const [editingTrack, setEditingTrack] = useState<Track | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editArtist, setEditArtist] = useState('');
+  const [editAlbum, setEditAlbum] = useState('');
+  const [editGenre, setEditGenre] = useState('');
+
+  const handleOpenEditTrack = (t: Track) => {
+    setEditingTrack(t);
+    setEditTitle(t.title);
+    setEditArtist(t.artist);
+    setEditAlbum(t.album || 'Kho nhạc Soundly');
+    setEditGenre(t.genre || 'Pop');
+  };
+
+  const handleSaveTrackEdit = async () => {
+    if (!editingTrack) return;
+    const updates = {
+      title: editTitle.trim() || editingTrack.title,
+      artist: editArtist.trim() || editingTrack.artist,
+      album: editAlbum.trim() || 'Kho nhạc Soundly',
+      genre: editGenre.trim() || 'Pop',
+    };
+    await musicApi.updateTrack(editingTrack.id, updates);
+    const updatedTracks = tracks.map(t => (t.id === editingTrack.id ? { ...t, ...updates } : t));
+    onTracksUpdated(updatedTracks);
+    setEditingTrack(null);
+  };
 
   // Fetch logged in users list from Firestore
   useEffect(() => {
@@ -1858,6 +1887,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                           {(t.duration % 60).toString().padStart(2, '0')}
                         </span>
                         <button
+                          onClick={() => handleOpenEditTrack(t)}
+                          className="p-2 text-[#8d99be] hover:text-[#f47b64] hover:bg-[#0d142c] rounded-lg transition-colors"
+                          title="Chỉnh sửa tên, album, nghệ sĩ, thể loại"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => handleDeleteTrack(t.id, t.title)}
                           className="p-2 text-[#8d99be] hover:text-rose-400 hover:bg-[#0d142c] rounded-lg transition-colors"
                           title="Xóa bài hát khỏi hệ thống"
@@ -1871,6 +1907,86 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* EDIT TRACK MODAL */}
+      {editingTrack && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0d142c] border border-[#222f5e] rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-[#f7f5f0]">Chỉnh sửa thông tin bài hát</h3>
+              <button
+                onClick={() => setEditingTrack(null)}
+                className="text-[#8d99be] hover:text-[#f7f5f0] p-1.5 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-[#a3aed0] mb-1">Tên bài hát</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full bg-[#152046] border border-[#222f5e] rounded-xl px-3.5 py-2.5 text-[#f7f5f0] focus:outline-none focus:border-[#f47b64]"
+                  placeholder="Nhập tên bài hát..."
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#a3aed0] mb-1">Nghệ sĩ</label>
+                <input
+                  type="text"
+                  value={editArtist}
+                  onChange={(e) => setEditArtist(e.target.value)}
+                  className="w-full bg-[#152046] border border-[#222f5e] rounded-xl px-3.5 py-2.5 text-[#f7f5f0] focus:outline-none focus:border-[#f47b64]"
+                  placeholder="Nhập tên nghệ sĩ..."
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#a3aed0] mb-1">Tên Album</label>
+                <input
+                  type="text"
+                  value={editAlbum}
+                  onChange={(e) => setEditAlbum(e.target.value)}
+                  className="w-full bg-[#152046] border border-[#222f5e] rounded-xl px-3.5 py-2.5 text-[#f7f5f0] focus:outline-none focus:border-[#f47b64]"
+                  placeholder="Nhập tên album..."
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#a3aed0] mb-1">Thể loại (Genre)</label>
+                <input
+                  type="text"
+                  value={editGenre}
+                  onChange={(e) => setEditGenre(e.target.value)}
+                  className="w-full bg-[#152046] border border-[#222f5e] rounded-xl px-3.5 py-2.5 text-[#f7f5f0] focus:outline-none focus:border-[#f47b64]"
+                  placeholder="Pop, Lo-Fi, Ballad, v.v..."
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingTrack(null)}
+                className="px-4 py-2 rounded-xl bg-[#152046] hover:bg-[#1e2a54] text-[#a3aed0] font-bold"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTrackEdit}
+                className="px-5 py-2 rounded-xl bg-[#f47b64] hover:bg-[#e06952] text-[#070b1a] font-extrabold shadow-md shadow-[#f47b64]/20"
+              >
+                Lưu thay đổi
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

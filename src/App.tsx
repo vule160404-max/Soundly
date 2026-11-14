@@ -54,37 +54,50 @@ const MainContent: React.FC = () => {
   const [isMobileNowPlayingOpen, setIsMobileNowPlayingOpen] = useState<boolean>(false);
 
   const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
   const touchEndXRef = useRef<number>(0);
+  const touchEndYRef = useRef<number>(0);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartXRef.current = e.targetTouches[0].clientX;
+    touchStartYRef.current = e.targetTouches[0].clientY;
+    touchEndXRef.current = e.targetTouches[0].clientX;
+    touchEndYRef.current = e.targetTouches[0].clientY;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     touchEndXRef.current = e.targetTouches[0].clientX;
+    touchEndYRef.current = e.targetTouches[0].clientY;
   };
 
   const handleTouchEnd = () => {
-    const diff = touchStartXRef.current - touchEndXRef.current;
-    const threshold = 65;
-    if (Math.abs(diff) < threshold) return;
+    const diffX = touchStartXRef.current - touchEndXRef.current;
+    const diffY = touchStartYRef.current - touchEndYRef.current;
+
+    // Ignore if vertical scroll is dominant
+    if (Math.abs(diffY) > Math.abs(diffX) * 1.3) return;
+
+    const threshold = 70;
+    if (Math.abs(diffX) < threshold) return;
 
     const tabs = ['home', 'explore', 'artists', 'liked', 'history', ...(isAdmin ? ['admin'] : [])];
     const currentIndex = tabs.indexOf(currentView);
     if (currentIndex === -1) return;
 
-    if (diff > 0) {
-      // Swiped left -> next tab
-      const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
-      setCurrentView(tabs[nextIndex]);
-      setSelectedPlaylistId(null);
-      setSelectedArtistId(null);
+    if (diffX > 0) {
+      // Swiped left -> next sequential tab
+      if (currentIndex < tabs.length - 1) {
+        setCurrentView(tabs[currentIndex + 1]);
+        setSelectedPlaylistId(null);
+        setSelectedArtistId(null);
+      }
     } else {
-      // Swiped right -> prev tab
-      const prevIndex = Math.max(0, currentIndex - 1);
-      setCurrentView(tabs[prevIndex]);
-      setSelectedPlaylistId(null);
-      setSelectedArtistId(null);
+      // Swiped right -> prev sequential tab
+      if (currentIndex > 0) {
+        setCurrentView(tabs[currentIndex - 1]);
+        setSelectedPlaylistId(null);
+        setSelectedArtistId(null);
+      }
     }
   };
 
