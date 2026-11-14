@@ -10,7 +10,12 @@ import {
   PutBucketCorsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { restoreVietnameseMetadataFromSlug } from './ai.js';
+import {
+  buildArtistSlugDictionaryFromTracks,
+  isHyphenFilenameSlug,
+  parseAndCleanSlugTrack,
+  restoreVietnameseMetadataFromSlug,
+} from './ai.js';
 
 export interface R2Config {
   accountId: string;
@@ -706,13 +711,13 @@ let cachedSpotflowHistoryAt = 0;
 async function getSpotflowHistorySlugMap(): Promise<
   Map<string, { title: string; artist: string; album?: string }>
 > {
-  if (cachedSpotflowHistoryMap && Date.now() - cachedSpotflowHistoryAt < 60_000) {
+  if (cachedSpotflowHistoryMap && Date.now() - cachedSpotflowHistoryAt < 180_000) {
     return cachedSpotflowHistoryMap;
   }
   const map = new Map<string, { title: string; artist: string; album?: string }>();
   try {
     const res = await fetch('https://musictool-ytsg.onrender.com/api/history', {
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(1200),
     });
     if (res.ok) {
       const data = (await res.json()) as {
@@ -732,12 +737,12 @@ async function getSpotflowHistorySlugMap(): Promise<
         if (slugFull && !map.has(slugFull)) map.set(slugFull, entry);
         if (slugTitleOnly && !map.has(slugTitleOnly)) map.set(slugTitleOnly, entry);
       }
-      cachedSpotflowHistoryMap = map;
-      cachedSpotflowHistoryAt = Date.now();
     }
   } catch {
     // non-fatal if Render is offline
   }
+  cachedSpotflowHistoryMap = map;
+  cachedSpotflowHistoryAt = Date.now();
   return map;
 }
 
@@ -766,7 +771,15 @@ function hasVietnameseDiacriticsOrProperCase(text?: string): boolean {
 function isLikelyRawSlugText(text?: string): boolean {
   if (!text || !text.trim()) return true;
   const t = text.trim();
-  if (t === 'Nghệ sĩ chưa rõ' || t === 'Bài hát trên R2') return true;
+  if (
+    t === 'Nghệ sĩ chưa rõ' ||
+    t === 'nghe si chua ro' ||
+    t === 'Bài hát trên R2' ||
+    t.includes('_') ||
+    isHyphenFilenameSlug(t)
+  ) {
+    return true;
+  }
   // All lowercase ASCII with spaces/dots is a raw filename slug
   return !/[^\u0000-\u007f]/.test(t) && t === t.toLowerCase();
 }
@@ -923,7 +936,10 @@ function estimateMp3DurationFromSize(sizeBytes?: number, tagByteSize: number = 0
   return Math.max(60, Math.min(600, secAt320));
 }
 
-function parseTrackMetaFromKey(key: string): {
+function parseTrackMetaFromKey(
+  key: string,
+  artistDict?: Record<string, string>
+): {
   title: string;
   artist: string;
   genreHint?: string;
@@ -938,12 +954,23 @@ function parseTrackMetaFromKey(key: string): {
     rawTitle = parts.slice(1).join(' - ').trim() || readable;
   }
 
-  const restored = restoreVietnameseMetadataFromSlug(rawTitle, rawArtist);
+  const restored = parseAndCleanSlugTrack(rawTitle, rawArtist, artistDict);
   return {
     artist: restored.artist || rawArtist,
     title: restored.title || rawTitle,
     genreHint: restored.genreHint,
   };
+}
+
+let cachedR2Catalog: R2StoredTrack[] | null = null;
+let cachedR2CatalogAt = 0;
+let inFlightR2CatalogPromise: Promise<R2StoredTrack[]> | null = null;
+const R2_CATALOG_CACHE_TTL_MS = 120_000;
+const probedId3Keys = new Set<string>();
+
+export function invalidateR2CatalogCache(): void {
+  cachedR2Catalog = null;
+  cachedR2CatalogAt = 0;
 }
 
 async function readR2CatalogManifest(
@@ -978,10 +1005,12 @@ export async function saveR2CatalogTracks(
       new PutObjectCommand({
         Bucket: cfg.bucketName,
         Key: CATALOG_OBJECT_KEY,
-        Body: JSON.stringify(tracks, null, 2),
+        Body: JSON.stringify(tracks),
         ContentType: 'application/json; charset=utf-8',
       })
     );
+    cachedR2Catalog = tracks;
+    cachedR2CatalogAt = Date.now();
     return true;
   } catch (err) {
     console.warn('[Cloudflare R2] Failed to save catalog manifest:', err);
@@ -1134,7 +1163,6 @@ function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2S
       ? bestAudio.genre
       : other.genre || bestAudio.genre || 'Pop';
 
-  // Prefer non-stub ID if available
   const bestId =
     !bestAudio.id.startsWith('r2-') || other.id.startsWith('r2-')
       ? bestAudio.id
@@ -1177,99 +1205,223 @@ function mergeR2TrackPair(primary: R2StoredTrack, secondary: R2StoredTrack): R2S
   };
 }
 
+function areR2ArtistListsCompatible(a: string[], b: string[]): boolean {
+  if (a.length === 0 || b.length === 0) return true;
+  if (a.join('|') === b.join('|')) return true;
+  for (const x of a) {
+    for (const y of b) {
+      if (x === y) return true;
+      if (x.length >= 4 && y.length >= 4 && (x.includes(y) || y.includes(x))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * O(N) hash-indexed deduplication for R2 catalog tracks.
+ */
 function deduplicateR2TrackList(tracks: R2StoredTrack[]): R2StoredTrack[] {
   const out: R2StoredTrack[] = [];
+  const byId = new Map<string, number>();
+  const bySpotifyId = new Map<string, number>();
+  const byR2Key = new Map<string, number>();
+  const byCoreTitle = new Map<string, number[]>();
+  const byCoreTitleNoD = new Map<string, number[]>();
+  const artistTokensByIndex: string[][] = [];
+
+  const indexAt = (
+    idx: number,
+    t: R2StoredTrack,
+    r2Key: string,
+    coreTitle: string,
+    coreTitleNoD: string,
+    artists: string[]
+  ) => {
+    if (t.id) byId.set(t.id, idx);
+    if (t.spotifyTrackId) bySpotifyId.set(t.spotifyTrackId.trim(), idx);
+    if (r2Key) byR2Key.set(r2Key, idx);
+    if (coreTitle) {
+      const bucket = byCoreTitle.get(coreTitle);
+      if (bucket) {
+        if (!bucket.includes(idx)) bucket.push(idx);
+      } else {
+        byCoreTitle.set(coreTitle, [idx]);
+      }
+    }
+    if (coreTitleNoD && coreTitleNoD.length >= 6) {
+      const bucket = byCoreTitleNoD.get(coreTitleNoD);
+      if (bucket) {
+        if (!bucket.includes(idx)) bucket.push(idx);
+      } else {
+        byCoreTitleNoD.set(coreTitleNoD, [idx]);
+      }
+    }
+    artistTokensByIndex[idx] = artists;
+  };
+
   for (const t of tracks) {
     if (!t || !t.id) continue;
-    const dupIdx = out.findIndex(existing => areR2TracksDuplicate(existing, t));
-    if (dupIdx === -1) {
+    const r2Key =
+      t.audioUrl && !t.audioUrl.startsWith('blob:') ? extractR2Key(t.audioUrl) : '';
+    const coreTitle = normalizeR2CoreTitle(t.title, false);
+    const coreTitleNoD =
+      coreTitle.length >= 6 ? normalizeR2CoreTitle(t.title, true) : '';
+    const artists = extractR2ArtistTokens(t.artist, t.title);
+
+    let dupIdx: number | undefined = byId.get(t.id);
+    if (dupIdx === undefined && t.spotifyTrackId) {
+      dupIdx = bySpotifyId.get(t.spotifyTrackId.trim());
+    }
+    if (dupIdx === undefined && r2Key) {
+      dupIdx = byR2Key.get(r2Key);
+    }
+    if (dupIdx === undefined && coreTitle) {
+      const candidates = byCoreTitle.get(coreTitle);
+      if (candidates) {
+        for (const candIdx of candidates) {
+          if (areR2ArtistListsCompatible(artistTokensByIndex[candIdx], artists)) {
+            dupIdx = candIdx;
+            break;
+          }
+        }
+      }
+    }
+    if (dupIdx === undefined && coreTitleNoD && coreTitleNoD.length >= 6) {
+      const candidates = byCoreTitleNoD.get(coreTitleNoD);
+      if (candidates) {
+        for (const candIdx of candidates) {
+          if (areR2ArtistListsCompatible(artistTokensByIndex[candIdx], artists)) {
+            dupIdx = candIdx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (dupIdx === undefined) {
+      const newIdx = out.length;
       out.push(t);
+      indexAt(newIdx, t, r2Key, coreTitle, coreTitleNoD, artists);
     } else {
-      out[dupIdx] = mergeR2TrackPair(out[dupIdx], t);
+      const merged = mergeR2TrackPair(out[dupIdx], t);
+      out[dupIdx] = merged;
+      const mKey =
+        merged.audioUrl && !merged.audioUrl.startsWith('blob:')
+          ? extractR2Key(merged.audioUrl)
+          : '';
+      const mTitle = normalizeR2CoreTitle(merged.title, false);
+      const mTitleNoD =
+        mTitle.length >= 6 ? normalizeR2CoreTitle(merged.title, true) : '';
+      const mArtists = extractR2ArtistTokens(merged.artist, merged.title);
+      indexAt(dupIdx, merged, mKey, mTitle, mTitleNoD, mArtists);
     }
   }
   return out;
 }
 
-export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
+async function listAllR2TrackObjects(
+  client: S3Client,
+  bucketName: string
+): Promise<Array<{ key: string; lastModified?: Date; size?: number }>> {
+  const listedTrackObjects: Array<{
+    key: string;
+    lastModified?: Date;
+    size?: number;
+  }> = [];
+  let continuationToken: string | undefined;
+  do {
+    const listRes = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: 'tracks/',
+        ContinuationToken: continuationToken,
+      })
+    );
+    for (const obj of listRes.Contents || []) {
+      if (obj.Key && AUDIO_EXT_REGEX.test(obj.Key)) {
+        listedTrackObjects.push({
+          key: obj.Key,
+          lastModified: obj.LastModified,
+          size: obj.Size,
+        });
+      }
+    }
+    continuationToken = listRes.IsTruncated
+      ? listRes.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
+  return listedTrackObjects;
+}
+
+async function listAllR2Covers(
+  client: S3Client,
+  cfg: R2Config
+): Promise<{
+  coverByStem: Map<string, string>;
+  coverByDStrippedStem: Map<string, string>;
+}> {
+  const coverByStem = new Map<string, string>();
+  const coverByDStrippedStem = new Map<string, string>();
+  let coverToken: string | undefined;
+  do {
+    const coverRes = await client.send(
+      new ListObjectsV2Command({
+        Bucket: cfg.bucketName,
+        Prefix: 'covers/',
+        ContinuationToken: coverToken,
+      })
+    );
+    for (const obj of coverRes.Contents || []) {
+      if (obj.Key && IMAGE_EXT_REGEX.test(obj.Key)) {
+        const coverUrl = buildR2PublicUrl(cfg, obj.Key);
+        const rawStem = extractFileStemFromKey(obj.Key);
+        const stemNorm = normalizeStemKey(rawStem, false);
+        const stemNoD = normalizeStemKey(rawStem, true);
+        if (stemNorm && !coverByStem.has(stemNorm)) {
+          coverByStem.set(stemNorm, coverUrl);
+        }
+        if (stemNoD && !coverByDStrippedStem.has(stemNoD)) {
+          coverByDStrippedStem.set(stemNoD, coverUrl);
+        }
+        if (rawStem.includes(' - ')) {
+          const titlePart = rawStem.split(' - ').slice(1).join(' - ').trim();
+          const titleNorm = normalizeStemKey(titlePart, false);
+          const titleNoD = normalizeStemKey(titlePart, true);
+          if (titleNorm && !coverByStem.has(titleNorm)) {
+            coverByStem.set(titleNorm, coverUrl);
+          }
+          if (titleNoD && !coverByDStrippedStem.has(titleNoD)) {
+            coverByDStrippedStem.set(titleNoD, coverUrl);
+          }
+        }
+      }
+    }
+    coverToken = coverRes.IsTruncated
+      ? coverRes.NextContinuationToken
+      : undefined;
+  } while (coverToken);
+
+  return { coverByStem, coverByDStrippedStem };
+}
+
+async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
   const cfg = loadR2Config();
   if (!isR2Configured(cfg)) return [];
 
   try {
     const client = getR2Client(cfg);
-    const manifestTracks = await readR2CatalogManifest(client, cfg.bucketName);
 
-    // 1. Scan tracks/ prefix in R2 (including Size so we can compute real duration!)
-    const listedTrackObjects: Array<{
-      key: string;
-      lastModified?: Date;
-      size?: number;
-    }> = [];
-    let continuationToken: string | undefined;
-    do {
-      const listRes = await client.send(
-        new ListObjectsV2Command({
-          Bucket: cfg.bucketName,
-          Prefix: 'tracks/',
-          ContinuationToken: continuationToken,
-        })
-      );
-      for (const obj of listRes.Contents || []) {
-        if (obj.Key && AUDIO_EXT_REGEX.test(obj.Key)) {
-          listedTrackObjects.push({
-            key: obj.Key,
-            lastModified: obj.LastModified,
-            size: obj.Size,
-          });
-        }
-      }
-      continuationToken = listRes.IsTruncated
-        ? listRes.NextContinuationToken
-        : undefined;
-    } while (continuationToken);
+    // Parallelize manifest read + tracks/ listing + covers/ listing
+    const [manifestTracks, listedTrackObjects, { coverByStem, coverByDStrippedStem }] =
+      await Promise.all([
+        readR2CatalogManifest(client, cfg.bucketName),
+        listAllR2TrackObjects(client, cfg.bucketName),
+        listAllR2Covers(client, cfg),
+      ]);
 
-    // 2. Scan covers/ prefix in R2 so any track missing its coverUrl automatically pairs with covers/
-    const coverByStem = new Map<string, string>();
-    const coverByDStrippedStem = new Map<string, string>();
-    let coverToken: string | undefined;
-    do {
-      const coverRes = await client.send(
-        new ListObjectsV2Command({
-          Bucket: cfg.bucketName,
-          Prefix: 'covers/',
-          ContinuationToken: coverToken,
-        })
-      );
-      for (const obj of coverRes.Contents || []) {
-        if (obj.Key && IMAGE_EXT_REGEX.test(obj.Key)) {
-          const coverUrl = buildR2PublicUrl(cfg, obj.Key);
-          const rawStem = extractFileStemFromKey(obj.Key);
-          const stemNorm = normalizeStemKey(rawStem, false);
-          const stemNoD = normalizeStemKey(rawStem, true);
-          if (stemNorm && !coverByStem.has(stemNorm)) {
-            coverByStem.set(stemNorm, coverUrl);
-          }
-          if (stemNoD && !coverByDStrippedStem.has(stemNoD)) {
-            coverByDStrippedStem.set(stemNoD, coverUrl);
-          }
-          // Also index by title-only part after " - "
-          if (rawStem.includes(' - ')) {
-            const titlePart = rawStem.split(' - ').slice(1).join(' - ').trim();
-            const titleNorm = normalizeStemKey(titlePart, false);
-            const titleNoD = normalizeStemKey(titlePart, true);
-            if (titleNorm && !coverByStem.has(titleNorm)) {
-              coverByStem.set(titleNorm, coverUrl);
-            }
-            if (titleNoD && !coverByDStrippedStem.has(titleNoD)) {
-              coverByDStrippedStem.set(titleNoD, coverUrl);
-            }
-          }
-        }
-      }
-      coverToken = coverRes.IsTruncated
-        ? coverRes.NextContinuationToken
-        : undefined;
-    } while (coverToken);
+    const artistDict = buildArtistSlugDictionaryFromTracks(manifestTracks);
 
     const findMatchingCoverInR2 = (
       audioKey: string,
@@ -1306,12 +1458,30 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       manifestTracks.map(t => t.audioUrl).filter(Boolean)
     );
 
-    const historySlugMap = await getSpotflowHistorySlugMap();
+    const missingObjects = listedTrackObjects
+      .filter(item => {
+        const publicUrl = buildR2PublicUrl(cfg, item.key);
+        return !knownKeys.has(item.key) && !knownUrls.has(publicUrl);
+      })
+      .sort(
+        (a, b) =>
+          (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
+      );
+
+    const hasSlugManifestTracks = manifestTracks.some(
+      t => isLikelyRawSlugText(t.title) || isLikelyRawSlugText(t.artist)
+    );
+    const historySlugMap =
+      missingObjects.length > 0 || hasSlugManifestTracks
+        ? await getSpotflowHistorySlugMap()
+        : new Map<string, { title: string; artist: string; album?: string }>();
+
     const lookupHistoryByKeyOrText = (
       audioKey: string,
       title: string,
       artist: string
     ): { title: string; artist: string; album?: string } | undefined => {
+      if (historySlugMap.size === 0) return undefined;
       const rawStem = extractFileStemFromKey(audioKey);
       const candidates = [
         slugifyMusicToolKey(rawStem),
@@ -1327,13 +1497,9 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
     };
 
     const recoveredTracks: R2StoredTrack[] = [];
-    for (const item of listedTrackObjects.sort(
-      (a, b) =>
-        (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
-    )) {
+    for (const item of missingObjects) {
       const publicUrl = buildR2PublicUrl(cfg, item.key);
-      if (knownKeys.has(item.key) || knownUrls.has(publicUrl)) continue;
-      const meta = parseTrackMetaFromKey(item.key);
+      const meta = parseTrackMetaFromKey(item.key, artistDict);
       const histMatch = lookupHistoryByKeyOrText(item.key, meta.title, meta.artist);
       const finalTitle = histMatch?.title || meta.title;
       const finalArtist = histMatch?.artist || meta.artist;
@@ -1378,10 +1544,9 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
         const k = next.r2CoverKey || extractR2Key(next.coverUrl);
         if (k) next.coverUrl = buildR2PublicUrl(cfg, k);
       }
-      // Heal raw slug titles/artists in existing manifest using MusicTool history first, then Vietnamese dictionary
       if (isLikelyRawSlugText(next.title) || isLikelyRawSlugText(next.artist)) {
         const histMatch = lookupHistoryByKeyOrText(audioKey || next.id, next.title, next.artist);
-        if (histMatch) {
+        if (histMatch && !isLikelyRawSlugText(histMatch.title)) {
           next.title = histMatch.title;
           next.artist = histMatch.artist;
           if (histMatch.album && next.album === 'Kho nhạc Cloudflare R2') {
@@ -1389,7 +1554,11 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
           }
           manifestUpdated = true;
         } else {
-          const restored = restoreVietnameseMetadataFromSlug(next.title, next.artist);
+          const restored = restoreVietnameseMetadataFromSlug(
+            next.title,
+            next.artist,
+            artistDict
+          );
           if (restored.title !== next.title || restored.artist !== next.artist) {
             next.title = restored.title;
             next.artist = restored.artist;
@@ -1400,7 +1569,20 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
           }
         }
       }
-      // Heal missing coverUrl from covers/ folder on R2
+      if (isLikelyRawSlugText(next.artist) && audioKey && audioKey.startsWith('tracks/')) {
+        const stem = extractFileStemFromKey(audioKey);
+        const fromKey = parseAndCleanSlugTrack(stem, 'Nghệ sĩ chưa rõ', artistDict);
+        if (fromKey.artist && fromKey.artist !== 'Nghệ sĩ chưa rõ') {
+          next.artist = fromKey.artist;
+          if (!/[^\u0000-\u007f]/.test(next.title) && fromKey.title) {
+            next.title = fromKey.title;
+          }
+          if (fromKey.genreHint && next.genre === 'Pop') {
+            next.genre = fromKey.genreHint;
+          }
+          manifestUpdated = true;
+        }
+      }
       if (!next.coverUrl || next.coverUrl === DEFAULT_COVER_URL) {
         const foundCover = findMatchingCoverInR2(
           audioKey || next.id,
@@ -1412,7 +1594,6 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
           manifestUpdated = true;
         }
       }
-      // Heal placeholder 210s (3:30) duration using real R2 object byte size
       if ((!next.duration || next.duration === 210) && audioKey && sizeByTrackKey.has(audioKey)) {
         const est = estimateMp3DurationFromSize(sizeByTrackKey.get(audioKey));
         if (est !== 210) {
@@ -1423,27 +1604,32 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       return next;
     });
 
-    // 3. For up to 12 tracks still missing Vietnamese diacritics or using 210s, inspect ID3v2 header directly from R2 MP3
-    const combinedList = deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
-    const tracksNeedingId3Probe = combinedList
-      .filter(
-        t =>
-          isStoredR2Audio(t.audioUrl) &&
-          (isLikelyRawSlugText(t.title) || isLikelyRawSlugText(t.artist))
-      )
-      .slice(0, 12);
+    // Single O(N) pass deduplication
+    const finalDeduped = deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
+
+    // Optional fast ID3v2 probe (at most 6 unprobed tracks per refresh)
+    const tracksNeedingId3Probe = finalDeduped
+      .filter(t => {
+        if (!isStoredR2Audio(t.audioUrl)) return false;
+        const key = extractR2Key(t.audioUrl);
+        if (!key || !key.startsWith('tracks/') || probedId3Keys.has(key)) return false;
+        return t.artist === 'Nghệ sĩ chưa rõ' || isLikelyRawSlugText(t.title);
+      })
+      .slice(0, 6);
 
     if (tracksNeedingId3Probe.length > 0) {
       await Promise.allSettled(
         tracksNeedingId3Probe.map(async track => {
           const key = extractR2Key(track.audioUrl);
-          if (!key || !key.startsWith('tracks/')) return;
+          if (!key) return;
+          probedId3Keys.add(key);
           const res = await client.send(
             new GetObjectCommand({
               Bucket: cfg.bucketName,
               Key: key,
               Range: 'bytes=0-32767',
-            })
+            }),
+            { abortSignal: AbortSignal.timeout(1500) }
           );
           const bytes = await res.Body?.transformToByteArray();
           if (!bytes || bytes.length < 16) return;
@@ -1464,7 +1650,6 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
             track.duration = id3.durationSec;
             manifestUpdated = true;
           }
-          // Re-check cover match with newly discovered ID3 title/artist
           if (!track.coverUrl || track.coverUrl === DEFAULT_COVER_URL) {
             const matchedCover = findMatchingCoverInR2(key, track.title, track.artist);
             if (matchedCover) {
@@ -1476,9 +1661,9 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
       );
     }
 
-    const finalDeduped = deduplicateR2TrackList(combinedList);
+    cachedR2Catalog = finalDeduped;
+    cachedR2CatalogAt = Date.now();
 
-    // Persist healed/recovered tracks into catalog/tracks.json so future loads are instant
     if (manifestUpdated || recoveredTracks.length > 0) {
       void saveR2CatalogTracks(finalDeduped);
     }
@@ -1486,8 +1671,33 @@ export async function getR2CatalogTracks(): Promise<R2StoredTrack[]> {
     return finalDeduped;
   } catch (err) {
     console.warn('[Cloudflare R2] Failed to read catalog tracks:', err);
-    return [];
+    return cachedR2Catalog || [];
   }
+}
+
+export async function getR2CatalogTracks(
+  forceRefresh: boolean = false
+): Promise<R2StoredTrack[]> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return [];
+
+  if (
+    !forceRefresh &&
+    cachedR2Catalog &&
+    Date.now() - cachedR2CatalogAt < R2_CATALOG_CACHE_TTL_MS
+  ) {
+    return cachedR2Catalog;
+  }
+
+  if (inFlightR2CatalogPromise) {
+    return inFlightR2CatalogPromise;
+  }
+
+  inFlightR2CatalogPromise = fetchR2CatalogTracksFresh().finally(() => {
+    inFlightR2CatalogPromise = null;
+  });
+
+  return inFlightR2CatalogPromise;
 }
 
 export async function upsertR2CatalogTracks(
@@ -1523,12 +1733,44 @@ export async function upsertR2CatalogTracksStrict(
     new PutObjectCommand({
       Bucket: cfg.bucketName,
       Key: CATALOG_OBJECT_KEY,
-      Body: JSON.stringify(merged, null, 2),
+      Body: JSON.stringify(merged),
       ContentType: 'application/json; charset=utf-8',
     })
   );
+  cachedR2Catalog = merged;
+  cachedR2CatalogAt = Date.now();
 
   return merged;
+}
+
+export async function batchUpdateR2CatalogTracks(
+  updates: Array<{ id: string; patch: Partial<R2StoredTrack> }>
+): Promise<number> {
+  if (!Array.isArray(updates) || updates.length === 0) return 0;
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return 0;
+
+  const patchMap = new Map<string, Partial<R2StoredTrack>>();
+  for (const item of updates) {
+    if (item && item.id && item.patch) {
+      patchMap.set(item.id, item.patch);
+    }
+  }
+  if (patchMap.size === 0) return 0;
+
+  const currentList = await getR2CatalogTracks();
+  let updatedCount = 0;
+  const nextList = currentList.map(track => {
+    const patch = patchMap.get(track.id);
+    if (!patch) return track;
+    updatedCount++;
+    return { ...track, ...patch };
+  });
+
+  if (updatedCount > 0) {
+    await saveR2CatalogTracks(nextList);
+  }
+  return updatedCount;
 }
 
 export async function updateR2CatalogTrack(
@@ -1547,7 +1789,6 @@ export async function updateR2CatalogTrack(
     return existing[idx];
   }
 
-  // Fallback for tracks auto-recovered from R2 tracks/ prefix
   const allR2 = await getR2CatalogTracks();
   const targetIdx = allR2.findIndex(t => t.id === id);
   if (targetIdx === -1) return null;
@@ -1574,7 +1815,6 @@ export async function incrementR2CatalogTrackPlays(
     return nextPlays;
   }
 
-  // Fallback for tracks auto-recovered directly from R2 tracks/ prefix before manifest existed
   const allR2 = await getR2CatalogTracks();
   const recovered = allR2.find(t => t.id === id);
   if (!recovered) return null;
@@ -1599,6 +1839,10 @@ export async function deleteR2CatalogTrack(id: string): Promise<boolean> {
   if (!target) {
     const allR2 = await getR2CatalogTracks();
     target = allR2.find(t => t.id === id);
+  }
+  if (cachedR2Catalog) {
+    cachedR2Catalog = cachedR2Catalog.filter(t => t.id !== id);
+    cachedR2CatalogAt = Date.now();
   }
   if (target?.r2AudioKey) {
     await deleteObjectFromR2(target.r2AudioKey);

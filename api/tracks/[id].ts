@@ -3,6 +3,7 @@ import {
   getR2CatalogTracks,
   upsertR2CatalogTracks,
   updateR2CatalogTrack,
+  batchUpdateR2CatalogTracks,
   incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
   R2StoredTrack,
@@ -139,6 +140,32 @@ export default async function handler(
       console.error('Error persisting batch tracks to R2:', err);
       sendJson(res, 500, {
         error: err instanceof Error ? err.message : 'Failed to save tracks.',
+      });
+    }
+    return;
+  }
+
+  // Handle PATCH /api/tracks/batch-update
+  if (id === 'batch-update') {
+    if (req.method !== 'PATCH') {
+      sendJson(res, 405, { error: 'Method Not Allowed' });
+      return;
+    }
+    try {
+      const body = await readJsonBody<{
+        updates?: Array<{ id: string; patch: Partial<R2StoredTrack> }>;
+      }>(req);
+      const updates = Array.isArray(body.updates) ? body.updates : [];
+      if (updates.length === 0) {
+        sendJson(res, 400, { error: 'updates array is required' });
+        return;
+      }
+      const updatedCount = await batchUpdateR2CatalogTracks(updates);
+      sendJson(res, 200, { success: true, updatedCount });
+    } catch (err: unknown) {
+      console.error('Error batch updating tracks in R2:', err);
+      sendJson(res, 500, {
+        error: err instanceof Error ? err.message : 'Failed to batch update tracks.',
       });
     }
     return;

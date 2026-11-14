@@ -1,7 +1,7 @@
 import { Track, Playlist, GenreCategory, LyricLine } from '../types/music';
 import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from '../data/mockTracks';
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import {
   deduplicateTracksList,
   healTrackVietnameseDisplay,
@@ -63,11 +63,25 @@ function getLocalCustomTracks(): Track[] {
   }
 }
 
+function compactTrackForLocalCache(track: Track): Track {
+  const { syncedLyrics: _s, plainLyrics: _p, lyrics: _l, ...rest } = track;
+  return {
+    ...rest,
+    lyrics: [],
+  };
+}
+
 function saveLocalCustomTracks(tracks: Track[]) {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(tracks));
+    const compacted = tracks.map(compactTrackForLocalCache);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compacted));
   } catch {
-    // ignore
+    try {
+      const trimmed = tracks.slice(0, 1500).map(compactTrackForLocalCache);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -265,6 +279,10 @@ export const musicApi = {
               merged.title !== existing.title ||
               merged.artist !== existing.artist ||
               merged.album !== existing.album ||
+              merged.genre !== existing.genre ||
+              merged.mood !== existing.mood ||
+              merged.aiClassified !== existing.aiClassified ||
+              merged.duration !== existing.duration ||
               merged.coverUrl !== existing.coverUrl ||
               merged.audioUrl !== existing.audioUrl ||
               (Number(merged.plays) || 0) !== (Number(existing.plays) || 0)
@@ -564,6 +582,65 @@ export const musicApi = {
     }
 
     return null;
+  },
+
+  async batchUpdateTracks(
+    items: Array<{ id: string; patch: Partial<Track>; fullTrack?: Track }>
+  ): Promise<void> {
+    if (items.length === 0) return;
+
+    const patchMap = new Map<string, Partial<Track>>();
+    for (const item of items) {
+      patchMap.set(item.id, item.patch);
+    }
+
+    const local = getLocalCustomTracks();
+    const localIds = new Set(local.map(t => t.id));
+    const updatedLocal = local.map(t => {
+      const p = patchMap.get(t.id);
+      return p ? { ...t, ...p } : t;
+    });
+    for (const item of items) {
+      if (!localIds.has(item.id) && item.fullTrack) {
+        updatedLocal.push({ ...item.fullTrack, ...item.patch });
+      }
+    }
+    saveLocalCustomTracks(updatedLocal);
+
+    const FS_CHUNK = 400;
+    for (let i = 0; i < items.length; i += FS_CHUNK) {
+      const slice = items.slice(i, i + FS_CHUNK);
+      const batch = writeBatch(db);
+      let hasWrites = false;
+      for (const item of slice) {
+        const mergedTrack = item.fullTrack ? { ...item.fullTrack, ...item.patch } : null;
+        if (mergedTrack && mergedTrack.audioUrl && mergedTrack.audioUrl.trim()) {
+          const sanitized = sanitizeTrackForFirestore(mergedTrack);
+          const safeId = String(sanitized.id);
+          batch.set(doc(db, 'soundly_tracks', safeId), sanitized);
+          hasWrites = true;
+        }
+      }
+      if (hasWrites) {
+        try {
+          await batch.commit();
+        } catch (err) {
+          console.warn('Firestore batch update error:', err);
+        }
+      }
+    }
+
+    try {
+      await fetch('/api/tracks/batch-update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updates: items.map(({ id, patch }) => ({ id, patch })),
+        }),
+      });
+    } catch {
+      // ignore
+    }
   },
 
   async deleteTrack(id: string): Promise<boolean> {

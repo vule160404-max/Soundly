@@ -19,6 +19,16 @@ export function normalizeVietnameseText(raw?: string | null): string {
     .trim();
 }
 
+export function slugifyArtistLookup(raw?: string | null): string {
+  return (raw || '')
+    .toLowerCase()
+    .replace(/đ/g, 'd')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function extractFeaturedFromTitle(rawTitle?: string | null): {
   cleanTitle: string;
   featuredArtists: string[];
@@ -100,7 +110,6 @@ export function areArtistListsCompatible(
   for (const a of tokensA) {
     for (const b of tokensB) {
       if (a === b) return true;
-      // Handle e.g. "14 casper" vs "casper"
       if (a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a))) {
         return true;
       }
@@ -110,29 +119,132 @@ export function areArtistListsCompatible(
 }
 
 const CLIENT_VIETNAMESE_ARTIST_MAP: Record<string, string> = {
+  'anh-trai-say-hi': 'ANH TRAI "SAY HI"',
+  'quang-hung-masterd': 'Quang Hùng MasterD',
+  'quang-hung-m': 'Quang Hùng MasterD',
+  'quang-hung': 'Quang Hùng MasterD',
+  'mr-siro': 'Mr. Siro',
+  'b-ray': 'B Ray',
+  'bray': 'B Ray',
+  'dat-g': 'Đạt G',
+  'du-uyen': 'Du Uyên',
+  'amee': 'AMEE',
   'buitruonglinh': 'buitruonglinh',
-  'bui truong linh': 'Bùi Trường Linh',
-  'le quyen': 'Lệ Quyên',
-  'bang kieu': 'Bằng Kiều',
-  'quang le': 'Quang Lê',
-  'le quyen quang le': 'Lệ Quyên, Quang Lê',
-  'hoai sa': 'Hoài Sa',
-  'son tung m tp': 'Sơn Tùng M-TP',
-  'den vau': 'Đen Vâu',
-  'hoang dung': 'Hoàng Dũng',
-  'phan manh quynh': 'Phan Mạnh Quỳnh',
-  'ha anh tuan': 'Hà Anh Tuấn',
-  'my tam': 'Mỹ Tâm',
-  'noo phuoc thinh': 'Noo Phước Thịnh',
-  'bich phuong': 'Bích Phương',
-  'duc phuc': 'Đức Phúc',
-  'hoa minzy': 'Hòa Minzy',
-  'van mai huong': 'Văn Mai Hương',
-  'trung quan': 'Trung Quân',
-  'quan a p': 'Quân A.P',
-  'hai dang doo': 'Hải Đăng Doo',
-  'quang dang tran': 'Quang Đăng Trần',
-  'ha an huy': 'Hà An Huy',
+  'bui-truong-linh': 'Bùi Trường Linh',
+  'le-quyen': 'Lệ Quyên',
+  'bang-kieu': 'Bằng Kiều',
+  'quang-le': 'Quang Lê',
+  'le-quyen-quang-le': 'Lệ Quyên, Quang Lê',
+  'hoai-sa': 'Hoài Sa',
+  'son-tung-m-tp': 'Sơn Tùng M-TP',
+  'son-tung-mtp': 'Sơn Tùng M-TP',
+  'den-vau': 'Đen Vâu',
+  'den': 'Đen',
+  'hoang-dung': 'Hoàng Dũng',
+  'phan-manh-quynh': 'Phan Mạnh Quỳnh',
+  'ha-anh-tuan': 'Hà Anh Tuấn',
+  'my-tam': 'Mỹ Tâm',
+  'noo-phuoc-thinh': 'Noo Phước Thịnh',
+  'bich-phuong': 'Bích Phương',
+  'duc-phuc': 'Đức Phúc',
+  'hoa-minzy': 'Hòa Minzy',
+  'van-mai-huong': 'Văn Mai Hương',
+  'trung-quan': 'Trung Quân',
+  'quan-a-p': 'Quân A.P',
+  'quan-ap': 'Quân A.P',
+  'hai-dang-doo': 'Hải Đăng Doo',
+  'quang-dang-tran': 'Quang Đăng Trần',
+  'ha-an-huy': 'Hà An Huy',
+  'soobin-hoang-son': 'SOOBIN',
+  'soobin': 'SOOBIN',
+  'justatee': 'JustaTee',
+  'binz': 'Binz',
+  'karik': 'Karik',
+  'tlinh': 'tlinh',
+  'rpt-mck': 'RPT MCK',
+  'mck': 'RPT MCK',
+  'wren-evans': 'Wren Evans',
+  'mono': 'MONO',
+  'grey-d': 'GREY D',
+  'hieuthuhai': 'HIEUTHUHAI',
+  'obito': 'Obito',
+  'low-g': 'Low G',
+  'phuong-ly': 'Phương Ly',
+  'thinh-suy': 'Thịnh Suy',
+  'ngot': 'Ngọt',
+  'ca-hoi-hoang': 'Cá Hồi Hoang',
+  'chillies': 'Chillies',
+  'da-lab': 'Da LAB',
+  'dalab': 'Da LAB',
+  'dangrangto': 'Dangrangto',
+  'osad': 'OSAD',
+  'only-c': 'Only C',
+  'lou-hoang': 'Lou Hoàng',
+  'miu-le': 'Miu Lê',
+  'trinh-thang-binh': 'Trịnh Thăng Bình',
+  'le-bao-binh': 'Lê Bảo Bình',
+  'ho-quang-hieu': 'Hồ Quang Hiếu',
+  'ung-hoang-phuc': 'Ưng Hoàng Phúc',
+  'dan-truong': 'Đan Trường',
+  'cam-ly': 'Cẩm Ly',
+  'dam-vinh-hung': 'Đàm Vĩnh Hưng',
+  'nhu-quynh': 'Như Quỳnh',
+  'manh-quynh': 'Mạnh Quỳnh',
+  'phi-nhung': 'Phi Nhung',
+  'duong-domic': 'Dương Domic',
+  'hurrykng': 'HURRYKNG',
+  'rhyder': 'RHYDER',
+  'captain': 'CAPTAIN',
+  'negav': 'NEGAV',
+  'jsol': 'JSOL',
+  'erik': 'ERIK',
+  'min': 'MIN',
+  'orange': 'Orange',
+  'lyly': 'LyLy',
+  'juky-san': 'Juky San',
+  'bui-cong-nam': 'Bùi Công Nam',
+  'tang-duy-tan': 'Tăng Duy Tân',
+  'hoang-thuy-linh': 'Hoàng Thùy Linh',
+  'truc-nhan': 'Trúc Nhân',
+  'bao-anh': 'Bảo Anh',
+  'huong-tram': 'Hương Tràm',
+  'khac-viet': 'Khắc Việt',
+  'vu-cat-tuong': 'Vũ Cát Tường',
+  'tien-tien': 'Tiên Tiên',
+  'bui-anh-tuan': 'Bùi Anh Tuấn',
+  'hoai-lam': 'Hoài Lâm',
+  'phuc-du': 'Phúc Du',
+  'bigdaddy': 'BigDaddy',
+  'emily': 'Emily',
+  'kai-dinh': 'Kai Đinh',
+  'thai-dinh': 'Thái Đinh',
+  'kien': 'Kiên',
+  'jack-j97': 'Jack - J97',
+  'k-icm': 'K-ICM',
+  'jung-kook': 'Jung Kook',
+  'latto': 'Latto',
+  'vu': 'Vũ.',
+  'kimmese': 'Kimmese',
+  'yanbi': 'Yanbi',
+  'hoang-ton': 'Hoàng Tôn',
+  'dsmall': 'Dsmall',
+  'xuan-nghi': 'Xuân Nghi',
+  'trang': 'Trang',
+  'madihu': 'Madihu',
+  'my-anh': 'Mỹ Anh',
+  'mac-mai-suong': 'Mạc Mai Sương',
+  'hooligan': 'Hooligan.',
+  'garrett-crosby': 'Garrett Crosby',
+  'captain-boy': 'CAPTAIN BOY',
+  'phap-kieu': 'Pháp Kiều',
+  'coolkid': 'CoolKid',
+  'danny-chung': 'Danny Chung',
+  'xuan-dinh-k-y': 'Xuân Định K.Y',
+  'hyo': 'HYO',
+  'tdk': 'TDK',
+  'minsicko': 'Minsicko',
+  'baby-sam': 'Baby Sam',
+  'vine': 'Vine',
 };
 
 const CLIENT_VIETNAMESE_TITLE_MAP: Record<
@@ -150,12 +262,8 @@ const CLIENT_VIETNAMESE_TITLE_MAP: Record<
     artist: 'buitruonglinh',
     genre: 'Ballad',
   },
+  'tung buoc cham 100 buoc': { title: 'Từng Bước Chậm 100 Bước', artist: 'buitruonglinh', genre: 'V-Pop' },
   'em a': { title: 'Em À', artist: 'buitruonglinh', genre: 'V-Pop' },
-  'cho em gan anh them chut nua feat. hoai sa': {
-    title: 'Cho Em Gần Anh Thêm Chút Nữa (feat. Hoài Sa)',
-    artist: 'Lệ Quyên',
-    genre: 'Ballad',
-  },
   'cho em gan anh them chut nua feat hoai sa': {
     title: 'Cho Em Gần Anh Thêm Chút Nữa (feat. Hoài Sa)',
     artist: 'Lệ Quyên',
@@ -190,56 +298,275 @@ const CLIENT_VIETNAMESE_TITLE_MAP: Record<
   'anh van o ay': { title: 'Anh Vẫn Ở Đây', genre: 'V-Pop' },
   'de danh khi thuc giac': { title: 'Để Dành Khi Thức Giấc', genre: 'Indie' },
   'e danh khi thuc giac': { title: 'Để Dành Khi Thức Giấc', genre: 'Indie' },
+  'nhung lo au ay': { title: 'Những Lo Âu Ấy', artist: 'Đạt G', genre: 'Lo-Fi & Chill' },
+  'den da khong duong': { title: 'Đen Đá Không Đường', artist: 'AMEE', genre: 'V-Pop' },
+  'anh nha o dau the': { title: 'Anh Nhà Ở Đâu Thế', artist: 'AMEE', genre: 'V-Pop' },
+  'yeu thi yeu khong yeu thi yeu': { title: 'Yêu Thì Yêu Không Yêu Thì Yêu', artist: 'AMEE', genre: 'V-Pop' },
+  'mama boy': { title: 'Mama Boy', artist: 'AMEE', genre: 'V-Pop' },
+  'dreamee intro': { title: 'Dreamee (Intro)', artist: 'AMEE', genre: 'V-Pop' },
+  'du tien': { title: 'Đủ Tiền', artist: 'B Ray', genre: 'Hip-Hop' },
+  'do for love': { title: 'Do For Love', artist: 'B Ray, AMEE', genre: 'Hip-Hop' },
+  'guong mat la lam': { title: 'Gương Mặt Lạ Lẫm', artist: 'Mr. Siro', genre: 'Ballad' },
+  'chi co mot nguoi de yeu tren the gian': { title: 'Chỉ Có Một Người Để Yêu Trên Thế Gian', artist: 'Mr. Siro', genre: 'Ballad' },
+  'me hieu con khong': { title: 'Mẹ Hiểu Con Không', artist: 'Mr. Siro', genre: 'Ballad' },
+  'nguyen lam tri ky': { title: 'Nguyện Làm Tri Kỷ', artist: 'Mr. Siro', genre: 'Ballad' },
+  'catch me if you can': { title: 'Catch Me If You Can', genre: 'V-Pop' },
 };
+
+const VERSION_SUFFIX_LABELS: Array<{ slug: string; label: string; genreHint?: string }> = [
+  { slug: 'lofi-version', label: '(Lo-Fi Ver.)', genreHint: 'Lo-Fi & Chill' },
+  { slug: 'lofi-ver', label: '(Lo-Fi Ver.)', genreHint: 'Lo-Fi & Chill' },
+  { slug: 'lo-fi-ver', label: '(Lo-Fi Ver.)', genreHint: 'Lo-Fi & Chill' },
+  { slug: 'lofi', label: '(Lo-Fi)', genreHint: 'Lo-Fi & Chill' },
+  { slug: 'acoustic-version', label: '(Acoustic Version)', genreHint: 'Ballad' },
+  { slug: 'acoustic-ver', label: '(Acoustic Ver.)', genreHint: 'Ballad' },
+  { slug: 'acoustic', label: '(Acoustic)', genreHint: 'Ballad' },
+  { slug: 'piano-version', label: '(Piano Version)', genreHint: 'Ballad' },
+  { slug: 'piano-ver', label: '(Piano Ver.)', genreHint: 'Ballad' },
+  { slug: 'instrumental', label: '(Instrumental)', genreHint: 'Ballad' },
+  { slug: 'explicit-ver', label: '(Explicit Ver.)' },
+  { slug: 'remix', label: '(Remix)', genreHint: 'EDM / Electronic' },
+  { slug: 'beat', label: '(Beat)' },
+  { slug: 'live', label: '(Live)' },
+];
+
+const LOWERCASE_TITLE_WORDS = new Set(['of', 'the', 'in', 'on', 'at', 'to', 'for', 'and', 'or', 'a', 'an']);
+
+function toSmartTitleCase(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word, idx) => {
+      if (word.toUpperCase() === word && word.length >= 2 && word.length <= 5 && /^[A-Z0-9]+$/.test(word)) {
+        return word;
+      }
+      const lower = word.toLowerCase();
+      if (idx > 0 && LOWERCASE_TITLE_WORDS.has(lower)) {
+        return lower;
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
+export function isHyphenFilenameSlug(text?: string | null): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t || /\s/.test(t)) return false;
+  if (/[^\u0000-\u007f]/.test(t)) return false;
+  const segments = t.split('-').filter(Boolean);
+  return segments.length >= 2;
+}
 
 export function isRawSlugDisplayText(text?: string | null): boolean {
   if (!text || !text.trim()) return true;
   const t = text.trim();
   if (PLACEHOLDER_ARTISTS.has(normalizeVietnameseText(t))) return true;
+  if (t.includes('_') || isHyphenFilenameSlug(t)) return true;
   return !/[^\u0000-\u007f]/.test(t) && t === t.toLowerCase();
 }
 
-export function healTrackVietnameseDisplay(track: Track): Track {
-  let title = (track.title || '').trim();
-  let artist = (track.artist || '').trim();
-  let genre = track.genre || 'Pop';
+export function buildArtistSlugDictionary(tracks: Track[]): Record<string, string> {
+  const map: Record<string, string> = { ...CLIENT_VIETNAMESE_ARTIST_MAP };
+  for (const t of tracks) {
+    const rawArtist = (t.artist || '').trim();
+    if (!rawArtist || isRawSlugDisplayText(rawArtist)) continue;
+    const parts = rawArtist
+      .split(/(?:,|&|;|\/|\bfeat\.?\b|\bft\.?\b)/i)
+      .map(s => s.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const slug = slugifyArtistLookup(part);
+      if (slug && slug.length >= 3 && !map[slug]) {
+        map[slug] = part;
+      }
+    }
+  }
+  return map;
+}
 
-  const titleKey = title.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-  const titleKeyAlpha = titleKey.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  const artistKey = artist
+export function parseAndCleanSlugTrack(
+  rawTitle: string,
+  rawArtist: string,
+  artistDict: Record<string, string> = CLIENT_VIETNAMESE_ARTIST_MAP
+): { title: string; artist: string; genreHint?: string } {
+  let cleanTitleInput = (rawTitle || '').replace(/\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i, '').trim();
+  cleanTitleInput = cleanTitleInput.replace(/-\d{10,}$/, '').replace(/-[0-9a-f]{8}$/i, '').trim();
+
+  let currentArtist = (rawArtist || '').trim();
+  const hasPlaceholderArtist =
+    !currentArtist || PLACEHOLDER_ARTISTS.has(normalizeVietnameseText(currentArtist)) || isRawSlugDisplayText(currentArtist);
+
+  // Fast space-separated lookup first (non-hyphenated titles)
+  const spaceKey = cleanTitleInput
     .toLowerCase()
-    .replace(/_/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[-_]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  const spaceKeyAlpha = spaceKey.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
-  const matchedTitle =
-    CLIENT_VIETNAMESE_TITLE_MAP[titleKey] ||
-    CLIENT_VIETNAMESE_TITLE_MAP[titleKeyAlpha];
+  const directDictMatch =
+    CLIENT_VIETNAMESE_TITLE_MAP[spaceKey] ||
+    CLIENT_VIETNAMESE_TITLE_MAP[spaceKeyAlpha];
 
-  if (matchedTitle && isRawSlugDisplayText(title)) {
-    title = matchedTitle.title;
-    if (matchedTitle.genre && genre === 'Pop') {
-      genre = matchedTitle.genre;
-    }
-    if (matchedTitle.artist && isRawSlugDisplayText(artist)) {
-      artist = matchedTitle.artist;
-    }
+  if (directDictMatch && isRawSlugDisplayText(cleanTitleInput)) {
+    const resolvedArtist =
+      !hasPlaceholderArtist
+        ? currentArtist
+        : directDictMatch.artist || 'Nghệ sĩ chưa rõ';
+    return {
+      title: directDictMatch.title,
+      artist: resolvedArtist,
+      genreHint: directDictMatch.genre,
+    };
   }
 
-  if (CLIENT_VIETNAMESE_ARTIST_MAP[artistKey] && isRawSlugDisplayText(artist)) {
-    artist = CLIENT_VIETNAMESE_ARTIST_MAP[artistKey];
+  // Handle hyphenated filename slugs like:
+  // "anh-trai-say-hi-quang-hung-masterd-catch-me-if-you-can-feat-quang-hung-m"
+  // "mr-siro-guong-mat-la-lam-beat"
+  // "b-ray-amee-do-for-love-feat-amee-lofi"
+  if (isHyphenFilenameSlug(cleanTitleInput) || cleanTitleInput.includes('_')) {
+    let workingSlug = cleanTitleInput
+      .toLowerCase()
+      .replace(/_/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    const sortedArtistSlugs = Object.keys(artistDict).sort((a, b) => b.length - a.length);
+    const extractedArtists: string[] = [];
+
+    // Greedily extract up to 3 artist prefixes from the front of the slug
+    for (let pass = 0; pass < 3; pass++) {
+      let matchedPrefix = false;
+      for (const aSlug of sortedArtistSlugs) {
+        if (workingSlug.startsWith(`${aSlug}-`) && workingSlug.length > aSlug.length + 2) {
+          const displayArtist = artistDict[aSlug];
+          if (displayArtist && !extractedArtists.includes(displayArtist)) {
+            extractedArtists.push(displayArtist);
+          }
+          workingSlug = workingSlug.slice(aSlug.length + 1);
+          matchedPrefix = true;
+          break;
+        }
+      }
+      if (!matchedPrefix) break;
+    }
+
+    // Extract trailing version tags
+    const versionLabels: string[] = [];
+    let genreHint: string | undefined;
+    let foundVersion = true;
+    while (foundVersion) {
+      foundVersion = false;
+      for (const v of VERSION_SUFFIX_LABELS) {
+        if (workingSlug.endsWith(`-${v.slug}`) && workingSlug.length > v.slug.length + 2) {
+          versionLabels.unshift(v.label);
+          if (v.genreHint && !genreHint) genreHint = v.genreHint;
+          workingSlug = workingSlug.slice(0, -(v.slug.length + 1));
+          foundVersion = true;
+          break;
+        }
+      }
+    }
+
+    // Extract -feat- / -ft- inside slug
+    let featLabel = '';
+    const featIdxMatch = workingSlug.match(/-(?:feat|ft|featuring)-(.+)$/);
+    if (featIdxMatch && featIdxMatch[1]) {
+      const featSlug = featIdxMatch[1];
+      workingSlug = workingSlug.slice(0, featIdxMatch.index);
+      const featDisplay =
+        artistDict[featSlug] ||
+        toSmartTitleCase(featSlug.replace(/-/g, ' '));
+      featLabel = `(feat. ${featDisplay})`;
+    }
+
+    const coreWords = workingSlug.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    const coreMatch = CLIENT_VIETNAMESE_TITLE_MAP[coreWords];
+    const formattedCore = coreMatch ? coreMatch.title : toSmartTitleCase(coreWords);
+    if (coreMatch?.genre && !genreHint) genreHint = coreMatch.genre;
+
+    const finalTitle = [formattedCore, featLabel, ...versionLabels]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    let finalArtist = currentArtist;
+    if (hasPlaceholderArtist) {
+      if (extractedArtists.length > 0) {
+        finalArtist = extractedArtists.join(', ');
+      } else if (coreMatch?.artist) {
+        finalArtist = coreMatch.artist;
+      } else {
+        const artistSlugCheck = slugifyArtistLookup(currentArtist);
+        if (artistDict[artistSlugCheck]) {
+          finalArtist = artistDict[artistSlugCheck];
+        }
+      }
+    }
+
+    return {
+      title: finalTitle || cleanTitleInput,
+      artist: finalArtist || 'Nghệ sĩ chưa rõ',
+      genreHint,
+    };
   }
 
-  if (title === track.title && artist === track.artist && genre === track.genre) {
+  // Non-hyphen lowercase title/artist cleanup
+  let finalTitle = cleanTitleInput;
+  if (isRawSlugDisplayText(cleanTitleInput)) {
+    finalTitle = directDictMatch ? directDictMatch.title : toSmartTitleCase(spaceKey);
+  }
+
+  let finalArtist = currentArtist;
+  const artistSlugKey = slugifyArtistLookup(currentArtist);
+  if (artistDict[artistSlugKey] && isRawSlugDisplayText(currentArtist)) {
+    finalArtist = artistDict[artistSlugKey];
+  } else if (directDictMatch?.artist && hasPlaceholderArtist) {
+    finalArtist = directDictMatch.artist;
+  } else if (!hasPlaceholderArtist && isRawSlugDisplayText(currentArtist)) {
+    finalArtist = toSmartTitleCase(currentArtist.replace(/[-_]+/g, ' '));
+  }
+
+  return {
+    title: finalTitle || rawTitle,
+    artist: finalArtist || rawArtist,
+    genreHint: directDictMatch?.genre,
+  };
+}
+
+export function healTrackVietnameseDisplay(
+  track: Track,
+  artistDict: Record<string, string> = CLIENT_VIETNAMESE_ARTIST_MAP
+): Track {
+  const needsTitleHeal = isRawSlugDisplayText(track.title);
+  const needsArtistHeal = isRawSlugDisplayText(track.artist);
+  if (!needsTitleHeal && !needsArtistHeal) {
+    return track;
+  }
+
+  const parsed = parseAndCleanSlugTrack(track.title || '', track.artist || '', artistDict);
+  const nextTitle = parsed.title || track.title;
+  const nextArtist = parsed.artist || track.artist;
+  const nextGenre =
+    parsed.genreHint && (!track.genre || track.genre === 'Pop')
+      ? parsed.genreHint
+      : track.genre;
+
+  if (
+    nextTitle === track.title &&
+    nextArtist === track.artist &&
+    nextGenre === track.genre
+  ) {
     return track;
   }
 
   return {
     ...track,
-    title,
-    artist,
-    genre,
+    title: nextTitle,
+    artist: nextArtist,
+    genre: nextGenre,
   };
 }
 
@@ -365,7 +692,7 @@ export function mergeDuplicateTrackPair(primary: Track, secondary: Track): Track
       : bestAudioTrack;
 
   const isDefaultCover = (url?: string) =>
-    !url || url.includes('photo-1511671782779-c97d3d27a1d4');
+    !url || url.includes('photo-1511671782779-c97d3d27a1d4') || url.includes('soundly-default-cover.svg');
 
   const bestCover = !isDefaultCover(bestAudioTrack.coverUrl)
     ? bestAudioTrack.coverUrl
@@ -411,19 +738,97 @@ export function mergeDuplicateTrackPair(primary: Track, secondary: Track): Track
   };
 }
 
+/**
+ * O(N) Hash-indexed deduplication + Vietnamese slug healing.
+ * Processes 2,500+ tracks in ~5ms instead of O(N^2) multi-minute stalls.
+ */
 export function deduplicateTracksList(tracks: Track[]): {
   deduped: Track[];
   removedIds: string[];
 } {
+  const artistDict = buildArtistSlugDictionary(tracks);
   const deduped: Track[] = [];
   const removedIds: string[] = [];
 
+  const byId = new Map<string, number>();
+  const bySpotifyId = new Map<string, number>();
+  const byAudioUrl = new Map<string, number>();
+  const byNormTitle = new Map<string, number[]>();
+  const byDStrippedTitle = new Map<string, number[]>();
+  const artistTokensByIndex: string[][] = [];
+
+  const indexTrackAt = (idx: number, t: Track, normTitle: string, dTitle: string, artists: string[]) => {
+    if (t.id) byId.set(t.id, idx);
+    if (t.spotifyTrackId) bySpotifyId.set(t.spotifyTrackId.trim(), idx);
+    if (t.audioUrl && !t.audioUrl.startsWith('blob:')) {
+      byAudioUrl.set(t.audioUrl.trim(), idx);
+    }
+    if (normTitle) {
+      const bucket = byNormTitle.get(normTitle);
+      if (bucket) {
+        if (!bucket.includes(idx)) bucket.push(idx);
+      } else {
+        byNormTitle.set(normTitle, [idx]);
+      }
+    }
+    if (dTitle && dTitle.length >= 6) {
+      const bucket = byDStrippedTitle.get(dTitle);
+      if (bucket) {
+        if (!bucket.includes(idx)) bucket.push(idx);
+      } else {
+        byDStrippedTitle.set(dTitle, [idx]);
+      }
+    }
+    artistTokensByIndex[idx] = artists;
+  };
+
   for (const rawTrack of tracks) {
     if (!rawTrack || !rawTrack.id) continue;
-    const track = healTrackVietnameseDisplay(rawTrack);
-    const dupIdx = deduped.findIndex(existing => areTracksDuplicate(existing, track));
-    if (dupIdx === -1) {
+    const track = healTrackVietnameseDisplay(rawTrack, artistDict);
+
+    const normTitle = normalizeTrackTitle(track.title);
+    const dTitle =
+      normTitle.length >= 6
+        ? normTitle.replace(/\bd/g, '').replace(/\s+/g, ' ').trim()
+        : '';
+    const artists = extractNormalizedArtistTokens(track.artist, track.title);
+
+    let dupIdx: number | undefined = byId.get(track.id);
+    if (dupIdx === undefined && track.spotifyTrackId) {
+      dupIdx = bySpotifyId.get(track.spotifyTrackId.trim());
+    }
+    if (dupIdx === undefined && track.audioUrl && !track.audioUrl.startsWith('blob:')) {
+      dupIdx = byAudioUrl.get(track.audioUrl.trim());
+    }
+
+    if (dupIdx === undefined && normTitle) {
+      const candidates = byNormTitle.get(normTitle);
+      if (candidates) {
+        for (const candIdx of candidates) {
+          if (areArtistListsCompatible(artistTokensByIndex[candIdx], artists)) {
+            dupIdx = candIdx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (dupIdx === undefined && dTitle) {
+      const candidates = byDStrippedTitle.get(dTitle);
+      if (candidates) {
+        for (const candIdx of candidates) {
+          if (areArtistListsCompatible(artistTokensByIndex[candIdx], artists)) {
+            dupIdx = candIdx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (dupIdx === undefined) {
+      const newIdx = deduped.length;
       deduped.push(track);
+      indexTrackAt(newIdx, track, normTitle, dTitle, artists);
     } else {
       const prev = deduped[dupIdx];
       const merged = mergeDuplicateTrackPair(prev, track);
@@ -432,6 +837,13 @@ export function deduplicateTracksList(tracks: Track[]): {
         removedIds.push(discardedId);
       }
       deduped[dupIdx] = merged;
+      const mergedNormTitle = normalizeTrackTitle(merged.title);
+      const mergedDTitle =
+        mergedNormTitle.length >= 6
+          ? mergedNormTitle.replace(/\bd/g, '').replace(/\s+/g, ' ').trim()
+          : '';
+      const mergedArtists = extractNormalizedArtistTokens(merged.artist, merged.title);
+      indexTrackAt(dupIdx, merged, mergedNormTitle, mergedDTitle, mergedArtists);
     }
   }
 

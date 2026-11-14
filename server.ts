@@ -4,18 +4,15 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, Type } from '@google/genai';
 import {
   INITIAL_TRACKS,
   INITIAL_PLAYLISTS,
   INITIAL_GENRES,
-  SPOTIFY_GENRE_NAMES,
 } from './src/data/mockTracks';
 import { Track, Playlist, LyricLine } from './src/types/music';
 import {
-  areTracksDuplicate,
   deduplicateTracksList,
-  mergeDuplicateTrackPair,
+  healTrackVietnameseDisplay,
 } from './src/utils/trackDedupe';
 import multer from 'multer';
 import {
@@ -32,6 +29,7 @@ import {
   upsertR2CatalogTracks,
   upsertR2CatalogTracksStrict,
   updateR2CatalogTrack,
+  batchUpdateR2CatalogTracks,
   incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
   getR2ObjectRange,
@@ -48,227 +46,15 @@ import {
   isValidSpotflowKeyFormat,
 } from './api/_lib/spotflow';
 import { fetchSpotifyCollectionMetadata } from './api/_lib/spotifyAlbum';
+import {
+  classifyBatchWithGemini,
+  ClassifyInputTrack,
+} from './api/_lib/ai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const UPLOADED_TRACKS_FILE = path.join(__dirname, 'saved_uploaded_tracks.json');
-
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
-interface ClassifyInputTrack {
-  id: string;
-  title: string;
-  artist?: string;
-  fileName?: string;
-  album?: string;
-  duration?: number;
-}
-
-interface ClassifiedTrackResult {
-  id: string;
-  genre: string;
-  mood: string;
-  bpm: number;
-  suggestedTitle: string;
-  suggestedArtist: string;
-  reason: string;
-}
-
-function cleanSlugToTitle(slug: string): { title: string; artist: string } {
-  if (!slug) return { title: 'Bài hát không tên', artist: 'Nghệ sĩ chưa rõ' };
-  let clean = slug.replace(/\.[^/.]+$/, '').trim();
-  let artist = 'Nghệ sĩ chưa rõ';
-  let title = clean;
-
-  if (clean.includes('-')) {
-    const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      const rawArtist = parts[0];
-      const rawTitle = parts.slice(1).join(' ');
-      artist = rawArtist
-        .replace(/[-_]+/g, ' ')
-        .split(' ')
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ');
-      title = rawTitle
-        .replace(/[-_]+/g, ' ')
-        .split(' ')
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ');
-    } else if (parts.length === 1) {
-      title = parts[0]
-        .replace(/[-_]+/g, ' ')
-        .split(' ')
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ');
-    }
-  } else {
-    title = clean
-      .replace(/[-_]+/g, ' ')
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(' ');
-  }
-  return { title, artist };
-}
-
-function sanitizeTrackTitle(track: Track): Track {
-  const title = (track.title || '').trim();
-  const artist = (track.artist || '').trim();
-  const isSlug = title.includes('-') || title.includes('_') || (!/[^\u0000-\u007f]/.test(title) && title === title.toLowerCase());
-  const isPlaceholderArtist = artist === 'Nghệ sĩ chưa rõ' || artist.includes('-') || artist.includes('_');
-
-  if (isSlug || isPlaceholderArtist) {
-    const cleaned = cleanSlugToTitle(title);
-    return {
-      ...track,
-      title: cleaned.title,
-      artist: isPlaceholderArtist || artist === 'Nghệ sĩ chưa rõ' ? cleaned.artist : track.artist,
-    };
-  }
-  return track;
-}
-
-function fallbackClassify(items: ClassifyInputTrack[]): ClassifiedTrackResult[] {
-  return items.map(item => {
-    const rawName = item.fileName || item.title || 'Bài hát không tên';
-    const cleaned = cleanSlugToTitle(rawName);
-    const title = cleaned.title;
-    const artist = item.artist && item.artist !== 'Chờ AI nhận diện...' && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : cleaned.artist;
-
-    const lower = (title + ' ' + artist).toLowerCase();
-    let genre = 'Pop';
-    if (lower.includes('rap') || lower.includes('hiphop') || lower.includes('trap') || lower.includes('đọc rap')) genre = 'Hip-Hop';
-    else if (lower.includes('lofi') || lower.includes('chill') || lower.includes('sleep') || lower.includes('thư giãn') || lower.includes('nhẹ nhàng')) genre = 'Lo-Fi & Chill';
-    else if (lower.includes('ballad') || lower.includes('acoustic') || lower.includes('lệ quyên') || lower.includes('bằng kiều') || lower.includes('quang lê') || lower.includes('buitruonglinh') || lower.includes('buồn') || lower.includes('suy') || lower.includes('tình lỡ') || lower.includes('đau') || lower.includes('khóc') || lower.includes('mưa') || lower.includes('đêm') || lower.includes('nhớ') || lower.includes('tự sự')) genre = 'Ballad';
-    else if (lower.includes('rock') || lower.includes('metal') || lower.includes('guitar điện')) genre = 'Rock';
-    else if (lower.includes('edm') || lower.includes('remix') || lower.includes('dance') || lower.includes('house') || lower.includes('bass')) genre = 'EDM / Electronic';
-    else if (lower.includes('r&b') || lower.includes('soul') || lower.includes('rnb')) genre = 'R&B';
-    else if (lower.includes('jazz')) genre = 'Jazz';
-    else if (lower.includes('classical') || lower.includes('piano') || lower.includes('không lời')) genre = 'Classical';
-    else if (lower.includes('indie') || lower.includes('folk') || lower.includes('underground')) genre = 'Indie';
-    else if (lower.includes('vpop') || lower.includes('nhạc trẻ')) genre = 'V-Pop';
-
-    return {
-      id: item.id,
-      genre,
-      mood: 'Thư giãn & Dễ chịu',
-      bpm: 110,
-      suggestedTitle: title,
-      suggestedArtist: artist,
-      reason: 'Phân loại tự động thông minh Soundly AI.',
-    };
-  });
-}
-
-async function classifyBatchWithGemini(
-  items: ClassifyInputTrack[]
-): Promise<ClassifiedTrackResult[]> {
-  const ai = getGeminiClient();
-  if (!ai) {
-    return fallbackClassify(items);
-  }
-
-  try {
-    const allowedGenresList = SPOTIFY_GENRE_NAMES.join(', ');
-
-    const processedItems = items.map(item => {
-      const cleanTitle = item.title && item.title !== 'Bài hát không tên' ? item.title : cleanSlugToTitle(item.fileName || '').title;
-      const artist = item.artist && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : '';
-      const searchQuery = artist ? `${artist} - ${cleanTitle}` : cleanTitle;
-      return {
-        id: item.id,
-        searchQuery,
-        artistHint: artist,
-        album: item.album || '',
-      };
-    });
-
-    const prompt = `Bạn là chuyên gia phân loại âm nhạc (Music Curator AI).
-Hãy phân tích danh sách bài hát bên dưới dựa trên 'searchQuery' (câu truy vấn tên bài hát đã được làm sạch khoảng trắng/ký tự) và 'artistHint' (gợi ý nghệ sĩ nếu có) bằng cách BẮT BUỘC sử dụng công cụ Google Search Grounding để tìm kiếm searchQuery trên Google, nhằm xác định chính xác:
-- Tên bài hát gốc chuẩn có dấu (suggestedTitle).
-- Tên nghệ sĩ chính xác (suggestedArtist).
-- Thể loại chuẩn (genre) trong danh sách cho phép.
-- Tâm trạng (mood), nhịp độ (bpm), và lý do (reason).
-
-LƯU Ý KỸ THUẬT QUAN TRỌNG:
-- searchQuery có thể được chuyển từ slug file (ví dụ: "buitruonglinh tung buoc cham 100 buoc"). Hãy dùng Google Search với searchQuery này để tìm ra tên bài hát tiếng Việt chuẩn có dấu (ví dụ: "Từng Bước Chậm 100 Bước").
-- suggestedArtist: Tên nghệ sĩ chuẩn có dấu, viết hoa đúng.
-- suggestedTitle: Tên bài hát sạch đẹp, chuẩn có dấu (khôi phục đầy đủ dấu tiếng Việt, loại bỏ ký tự rác như [Official MV], (320kbps), .mp3).
-
-DANH SÁCH THỂ LOẠI CHUẨN BẮT BUỘC (chỉ chọn 1 trong các giá trị sau cho trường genre):
-[${allowedGenresList}]
-
-Yêu cầu cho từng bài hát:
-1. "id": Giữ nguyên id gốc của bài hát.
-2. "genre": Chọn chính xác 1 thể loại phù hợp nhất dựa trên kiến thức âm nhạc về nghệ sĩ và tên bài.
-3. "suggestedArtist": Tên nghệ sĩ chuẩn có dấu.
-4. "suggestedTitle": Tên bài hát sạch đẹp, chuẩn có dấu.
-5. "mood": Tâm trạng thực tế bằng tiếng Việt (ví dụ: "Nhạc suy & Buồn", "Thư giãn & Chill", "Vui vẻ & Yêu đời", "Lãng mạn", "Sôi động").
-6. "bpm": Ước lượng nhịp BPM phù hợp (60-180).
-7. "reason": Giải thích ngắn gọn 1 câu bằng tiếng Việt lý do đánh giá thể loại và tâm trạng đó dựa trên tên bài và nghệ sĩ.
-
-Danh sách bài hát cần phân loại:
-${JSON.stringify(processedItems, null, 2)}`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction:
-          'You are an expert music curator and metadata parser with real-time Google Search grounding. You MUST use Google Search to search for the song title and artist on Google whenever needed to verify the exact music genre, album, and background before classifying. Always return valid JSON matching the schema and strictly pick genres from the provided allowlist.',
-        tools: [{ googleSearch: {} }],
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              genre: { type: Type.STRING },
-              mood: { type: Type.STRING },
-              bpm: { type: Type.INTEGER },
-              suggestedTitle: { type: Type.STRING },
-              suggestedArtist: { type: Type.STRING },
-              reason: { type: Type.STRING },
-            },
-            required: ['id', 'genre', 'mood', 'bpm', 'suggestedTitle', 'suggestedArtist', 'reason'],
-          },
-        },
-      },
-    });
-
-    const rawText = (response.text ?? '[]').trim();
-    const parsed = JSON.parse(rawText) as ClassifiedTrackResult[];
-
-    return parsed.map(item => {
-      const matchedGenre =
-        SPOTIFY_GENRE_NAMES.find(g => g.toLowerCase() === (item.genre || '').toLowerCase()) || 'Pop';
-      return {
-        ...item,
-        genre: matchedGenre,
-        bpm: Number.isFinite(item.bpm) ? item.bpm : 110,
-        suggestedTitle: item.suggestedTitle || 'Bài hát',
-        suggestedArtist: item.suggestedArtist || 'Nghệ sĩ chưa rõ',
-      };
-    });
-  } catch (err) {
-    console.warn('Gemini AI classification encountered error, using smart fallback:', err);
-    return fallbackClassify(items);
-  }
-}
 
 async function startServer() {
   const app = express();
@@ -281,13 +67,15 @@ async function startServer() {
   try {
     if (fs.existsSync(UPLOADED_TRACKS_FILE)) {
       const raw = fs.readFileSync(UPLOADED_TRACKS_FILE, 'utf8');
-      uploadedTracks = (JSON.parse(raw) as Track[]).map(sanitizeTrackTitle);
+      uploadedTracks = (JSON.parse(raw) as Track[]).map(t => healTrackVietnameseDisplay(t));
     }
   } catch (e) {
     console.warn('Could not load saved uploaded tracks from disk:', e);
   }
 
-  let tracks: Track[] = [...uploadedTracks, ...INITIAL_TRACKS].map(sanitizeTrackTitle);
+  let tracks: Track[] = [...uploadedTracks, ...INITIAL_TRACKS].map(t =>
+    healTrackVietnameseDisplay(t)
+  );
   const playlists: Playlist[] = [...INITIAL_PLAYLISTS];
 
   function persistTracks() {
@@ -504,20 +292,13 @@ async function startServer() {
 
   app.get('/api/tracks', async (req, res) => {
     const { q, genre } = req.query;
-    let results = [...tracks];
+    let results: Track[] = [...tracks];
 
     if (isR2Configured()) {
       const r2Tracks = await getR2CatalogTracks();
-      for (const rt of r2Tracks) {
-        const dupIdx = results.findIndex(existing => areTracksDuplicate(existing, rt));
-        if (dupIdx === -1) {
-          results.push(rt);
-        } else {
-          results[dupIdx] = mergeDuplicateTrackPair(results[dupIdx], rt);
-        }
-      }
+      results = [...results, ...(r2Tracks as unknown as Track[])];
     }
-    results = deduplicateTracksList(results).deduped.map(sanitizeTrackTitle);
+    results = deduplicateTracksList(results).deduped;
 
     if (genre && typeof genre === 'string' && genre !== 'all') {
       results = results.filter(t => t.genre.toLowerCase() === genre.toLowerCase());
@@ -534,11 +315,23 @@ async function startServer() {
       );
     }
 
-    res.json(results);
+    const includeLyrics = req.query.includeLyrics === '1';
+    const payload = includeLyrics
+      ? results
+      : results.map(({ syncedLyrics: _s, plainLyrics: _p, lyrics: _l, ...rest }) => ({
+          ...rest,
+          lyrics: [],
+        }));
+
+    res.json(payload);
   });
 
-  app.get('/api/tracks/:id', (req, res) => {
-    const track = tracks.find(t => t.id === req.params.id);
+  app.get('/api/tracks/:id', async (req, res) => {
+    let track = tracks.find(t => t.id === req.params.id);
+    if (!track && isR2Configured()) {
+      const r2Tracks = await getR2CatalogTracks();
+      track = r2Tracks.find(t => t.id === req.params.id) as unknown as Track | undefined;
+    }
     if (!track) {
       return res.status(404).json({ error: 'Track not found' });
     }
@@ -683,6 +476,43 @@ async function startServer() {
     }
   });
 
+  app.patch('/api/tracks/batch-update', async (req, res) => {
+    try {
+      const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'updates array is required' });
+      }
+      const patchMap = new Map<string, Partial<Track>>();
+      for (const item of updates) {
+        if (item && typeof item.id === 'string' && item.patch && typeof item.patch === 'object') {
+          patchMap.set(item.id, item.patch as Partial<Track>);
+        }
+      }
+
+      let memUpdated = 0;
+      tracks = tracks.map(t => {
+        const p = patchMap.get(t.id);
+        if (!p) return t;
+        memUpdated++;
+        return { ...t, ...p };
+      });
+      if (memUpdated > 0) persistTracks();
+
+      const r2Updated = isR2Configured()
+        ? await batchUpdateR2CatalogTracks(
+            Array.from(patchMap.entries()).map(([id, patch]) => ({ id, patch }))
+          )
+        : 0;
+
+      res.json({ success: true, updatedCount: Math.max(memUpdated, r2Updated) });
+    } catch (err: unknown) {
+      console.error('Batch update error:', err);
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Batch update failed',
+      });
+    }
+  });
+
   app.patch('/api/tracks/:id', async (req, res) => {
     const { id } = req.params;
     const idx = tracks.findIndex(t => t.id === id);
@@ -760,12 +590,22 @@ async function startServer() {
     res.json(dynamicGenres);
   });
 
-  app.get('/api/lyrics/:id', (req, res) => {
-    const track = tracks.find(t => t.id === req.params.id);
+  app.get('/api/lyrics/:id', async (req, res) => {
+    let track = tracks.find(t => t.id === req.params.id);
+    if (!track && isR2Configured()) {
+      const r2Tracks = await getR2CatalogTracks();
+      track = r2Tracks.find(t => t.id === req.params.id) as unknown as Track | undefined;
+    }
     if (!track) {
       return res.status(404).json({ error: 'Track not found' });
     }
-    res.json({ trackId: track.id, lyrics: track.lyrics || [] });
+    res.json({
+      trackId: track.id,
+      lyrics: track.lyrics || [],
+      syncedLyrics: track.syncedLyrics,
+      plainLyrics: track.plainLyrics,
+      lyricsMode: track.lyricsMode,
+    });
   });
 
   function applyIngestedTracksToMemory(added: Track[], updated: Track[]) {

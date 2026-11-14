@@ -35,6 +35,7 @@ import {
   deduplicateTracksList,
   findDuplicateTrack,
   isR2AudioUrl,
+  isRawSlugDisplayText,
 } from '../utils/trackDedupe';
 
 interface AdminDashboardViewProps {
@@ -138,15 +139,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const expiredSourceTracks = tracks.filter(t => isExpiredExternalTrack(t.audioUrl));
 
   const isNameErrorTrack = (t: Track) => {
-    const title = (t.title || '').trim();
-    const artist = (t.artist || '').trim();
-    const isUnaccentedLowerTitle = !/[^\u0000-\u007f]/.test(title) && title === title.toLowerCase();
-    const isPlaceholderArtist =
-      artist === 'Nghệ sĩ chưa rõ' ||
-      artist === 'nghe si chua ro' ||
-      (!/[^\u0000-\u007f]/.test(artist) && artist === artist.toLowerCase());
-    const hasSlugUnderscore = title.includes('_') || artist.includes('_');
-    return isUnaccentedLowerTitle || isPlaceholderArtist || hasSlugUnderscore;
+    return isRawSlugDisplayText(t.title) || isRawSlugDisplayText(t.artist);
   };
 
   // Batch upload state (FILES ONLY, NO URLS!)
@@ -671,59 +664,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
   };
 
-  const cleanSlugToTitle = (slug: string): { title: string; artist: string } => {
-    if (!slug) return { title: 'Bài hát không tên', artist: 'Nghệ sĩ chưa rõ' };
-    let clean = slug.replace(/\.[^/.]+$/, '').trim();
-    let artist = 'Nghệ sĩ chưa rõ';
-    let title = clean;
-
-    if (clean.includes('-')) {
-      const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
-      if (parts.length >= 2) {
-        const rawArtist = parts[0];
-        const rawTitle = parts.slice(1).join(' ');
-        artist = rawArtist
-          .replace(/[-_]+/g, ' ')
-          .split(' ')
-          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-        title = rawTitle
-          .replace(/[-_]+/g, ' ')
-          .split(' ')
-          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-      } else if (parts.length === 1) {
-        title = parts[0]
-          .replace(/[-_]+/g, ' ')
-          .split(' ')
-          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-      }
-    } else {
-      title = clean
-        .replace(/[-_]+/g, ' ')
-        .split(' ')
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ');
-    }
-    return { title, artist };
-  };
-
-
-
-  // Re-classify existing tracks in catalog using AI in batches
+  // Re-classify existing tracks in catalog using AI in batches (atomic batch persistence)
   const handleReclassifyCatalogWithAI = async () => {
     if (tracks.length === 0) return;
     setIsReclassifyingCatalog(true);
     setAiError(null);
 
-    try {
-      const chunkSize = 40;
-      let allUpdatedTracks = [...tracks];
+    const trackMap = new Map(tracks.map(t => [t.id, t]));
+    const prioritized = [
+      ...tracks.filter(t => isNameErrorTrack(t) || !t.aiClassified),
+      ...tracks.filter(t => !isNameErrorTrack(t) && t.aiClassified),
+    ];
 
-      for (let i = 0; i < tracks.length; i += chunkSize) {
-        const chunk = tracks.slice(i, i + chunkSize);
-        setUploadProgressText(`Đang phân loại batch ${Math.floor(i / chunkSize) + 1}/${Math.ceil(tracks.length / chunkSize)}...`);
+    try {
+      const chunkSize = 30;
+      const totalChunks = Math.ceil(prioritized.length / chunkSize);
+
+      for (let i = 0; i < prioritized.length; i += chunkSize) {
+        const chunk = prioritized.slice(i, i + chunkSize);
+        setUploadProgressText(
+          `Đang phân loại AI & chuẩn hóa tên (${Math.floor(i / chunkSize) + 1}/${totalChunks})...`
+        );
 
         const results = await musicApi.classifyTracksWithAI(
           chunk.map(t => ({
@@ -735,29 +696,35 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           }))
         );
 
-        const map = new Map(results.map(r => [r.id, r]));
-        allUpdatedTracks = await Promise.all(
-          allUpdatedTracks.map(async track => {
-            const ai = map.get(track.id);
-            if (!ai) return track;
+        const resultMap = new Map(results.map(r => [r.id, r]));
+        const batchUpdates: Array<{ id: string; patch: Partial<Track>; fullTrack?: Track }> = [];
 
-            const patch: Partial<Track> = {
-              ...(ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
-              ...(ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
-              genre: ai.genre,
-              mood: ai.mood,
-              bpm: ai.bpm,
-              aiClassified: true,
-              aiReason: ai.reason,
-            };
-            await musicApi.updateTrack(track.id, patch);
-            return { ...track, ...patch };
-          })
-        );
+        for (const original of chunk) {
+          const ai = resultMap.get(original.id);
+          if (!ai) continue;
+
+          const patch: Partial<Track> = {
+            ...(ai.suggestedTitle ? { title: ai.suggestedTitle } : {}),
+            ...(ai.suggestedArtist ? { artist: ai.suggestedArtist } : {}),
+            genre: ai.genre,
+            mood: ai.mood,
+            bpm: ai.bpm,
+            aiClassified: true,
+            aiReason: ai.reason,
+          };
+          trackMap.set(original.id, { ...original, ...patch });
+          batchUpdates.push({ id: original.id, patch, fullTrack: original });
+        }
+
+        if (batchUpdates.length > 0) {
+          await musicApi.batchUpdateTracks(batchUpdates);
+          onTracksUpdated(Array.from(trackMap.values()));
+        }
       }
 
-      onTracksUpdated(allUpdatedTracks);
-      setUploadSuccessToast(`AI đã phân loại và làm sạch thành công toàn bộ ${tracks.length} bài hát!`);
+      setUploadSuccessToast(
+        `AI đã phân loại và làm sạch thành công toàn bộ ${prioritized.length} bài hát!`
+      );
       setTimeout(() => setUploadSuccessToast(null), 4000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Lỗi khi phân loại lại kho nhạc bằng AI.';

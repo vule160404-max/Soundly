@@ -15,6 +15,7 @@ export default async function handler(
     const reqUrl = new URL(req.url || '/api/tracks', 'http://localhost');
     const q = (reqUrl.searchParams.get('q') || '').toLowerCase().trim();
     const genre = (reqUrl.searchParams.get('genre') || '').trim();
+    const includeLyrics = reqUrl.searchParams.get('includeLyrics') === '1';
 
     let results = await getR2CatalogTracks();
 
@@ -34,7 +35,14 @@ export default async function handler(
       );
     }
 
-    sendJson(res, 200, results);
+    const payload = includeLyrics
+      ? results
+      : results.map(({ syncedLyrics: _s, plainLyrics: _p, lyrics: _l, ...rest }) => ({
+          ...rest,
+          lyrics: [],
+        }));
+
+    sendJson(res, 200, payload);
   } catch (err: unknown) {
     console.error('Error loading R2 tracks:', err);
     sendJson(res, 500, {
