@@ -671,6 +671,70 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
   };
 
+  const cleanSlugToTitle = (slug: string): { title: string; artist: string } => {
+    if (!slug) return { title: 'Bài hát không tên', artist: 'Nghệ sĩ chưa rõ' };
+    let clean = slug.replace(/\.[^/.]+$/, '').trim();
+    let artist = 'Nghệ sĩ chưa rõ';
+    let title = clean;
+
+    if (clean.includes('-')) {
+      const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const rawArtist = parts[0];
+        const rawTitle = parts.slice(1).join(' ');
+        artist = rawArtist
+          .replace(/[-_]+/g, ' ')
+          .split(' ')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+        title = rawTitle
+          .replace(/[-_]+/g, ' ')
+          .split(' ')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      } else if (parts.length === 1) {
+        title = parts[0]
+          .replace(/[-_]+/g, ' ')
+          .split(' ')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      }
+    } else {
+      title = clean
+        .replace(/[-_]+/g, ' ')
+        .split(' ')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+    }
+    return { title, artist };
+  };
+
+  const handleAutoFixSlugs = async () => {
+    if (tracks.length === 0) return;
+    try {
+      const updated = await Promise.all(
+        tracks.map(async track => {
+          const isSlug = track.title.includes('-') || track.title.includes('_') || (!/[^\u0000-\u007f]/.test(track.title) && track.title === track.title.toLowerCase());
+          if (!isSlug && track.artist !== 'Nghệ sĩ chưa rõ') return track;
+
+          const cleaned = cleanSlugToTitle(track.title);
+          const patch: Partial<Track> = {
+            title: cleaned.title,
+            artist: track.artist === 'Nghệ sĩ chưa rõ' ? cleaned.artist : track.artist,
+          };
+          await musicApi.updateTrack(track.id, patch);
+          return { ...track, ...patch };
+        })
+      );
+      onTracksUpdated(updated);
+      setUploadSuccessToast(`Đã tự động sửa sạch tên cho toàn bộ bài hát bị lỗi slug!`);
+      setTimeout(() => setUploadSuccessToast(null), 4000);
+    } catch (err) {
+      console.error('Error auto fixing slugs:', err);
+      setAiError('Lỗi khi tự động sửa tên bài hát.');
+    }
+  };
+
   // Re-classify existing tracks in catalog using AI in batches
   const handleReclassifyCatalogWithAI = async () => {
     if (tracks.length === 0) return;
@@ -1807,18 +1871,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
             <div className="flex items-center gap-2">
               {tracks.length > 0 && (
-                <button
-                  onClick={handleReclassifyCatalogWithAI}
-                  disabled={isReclassifyingCatalog}
-                  className="px-3.5 py-1.5 rounded-full bg-[#f47b64]/15 hover:bg-[#f47b64]/25 text-[#f47b64] border border-[#f47b64]/40 text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 transition-all"
-                >
-                  {isReclassifyingCatalog ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Wand2 className="w-3.5 h-3.5" />
-                  )}
-                  <span>AI Phân loại tất cả</span>
-                </button>
+                <>
+                  <button
+                    onClick={handleAutoFixSlugs}
+                    className="px-3.5 py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>⚡ Sửa sạch tên lỗi</span>
+                  </button>
+                  <button
+                    onClick={handleReclassifyCatalogWithAI}
+                    disabled={isReclassifyingCatalog}
+                    className="px-3.5 py-1.5 rounded-full bg-[#f47b64]/15 hover:bg-[#f47b64]/25 text-[#f47b64] border border-[#f47b64]/40 text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 transition-all"
+                  >
+                    {isReclassifyingCatalog ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Wand2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>AI Phân loại tất cả</span>
+                  </button>
+                </>
               )}
 
               <span className="text-xs font-mono tabular-nums px-3 py-1 rounded-full bg-[#0d142c] text-[#f7f5f0] font-bold border border-[#222f5e]">

@@ -86,42 +86,50 @@ interface ClassifiedTrackResult {
   reason: string;
 }
 
-function humanizeSlug(slug: string): string {
-  if (!slug) return 'Bài hát không tên';
-  const cleaned = slug
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleaned
-    .split(' ')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
+function cleanSlugToTitle(slug: string): { title: string; artist: string } {
+  if (!slug) return { title: 'Bài hát không tên', artist: 'Nghệ sĩ chưa rõ' };
+  let clean = slug.replace(/\.[^/.]+$/, '').trim();
+  let artist = 'Nghệ sĩ chưa rõ';
+  let title = clean;
+
+  if (clean.includes('-')) {
+    const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const rawArtist = parts[0];
+      const rawTitle = parts.slice(1).join(' ');
+      artist = rawArtist
+        .replace(/[-_]+/g, ' ')
+        .split(' ')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+      title = rawTitle
+        .replace(/[-_]+/g, ' ')
+        .split(' ')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+    } else if (parts.length === 1) {
+      title = parts[0]
+        .replace(/[-_]+/g, ' ')
+        .split(' ')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+    }
+  } else {
+    title = clean
+      .replace(/[-_]+/g, ' ')
+      .split(' ')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+  return { title, artist };
 }
 
 function fallbackClassify(items: ClassifyInputTrack[]): ClassifiedTrackResult[] {
   return items.map(item => {
     const rawName = item.fileName || item.title || 'Bài hát không tên';
-    const clean = rawName.replace(/\.[^/.]+$/, '');
-    let artist = item.artist && item.artist !== 'Chờ AI nhận diện...' && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : '';
-    let title = clean;
-
-    if (clean.includes('-')) {
-      const parts = clean.split('-');
-      if (parts.length >= 2) {
-        const potentialArtist = parts[0].replace(/^[0-9.\s]+/, '').trim();
-        const potentialTitle = parts.slice(1).join('-').trim();
-        if (!artist && potentialArtist) artist = humanizeSlug(potentialArtist);
-        if (potentialTitle) title = humanizeSlug(potentialTitle);
-      }
-    } else {
-      title = humanizeSlug(clean);
-    }
-    if (!artist || artist === 'Nghệ sĩ chưa rõ') {
-      artist = 'Nghệ sĩ Việt Nam';
-    } else {
-      artist = humanizeSlug(artist);
-    }
+    const cleaned = cleanSlugToTitle(rawName);
+    const title = cleaned.title;
+    const artist = item.artist && item.artist !== 'Chờ AI nhận diện...' && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : cleaned.artist;
 
     const lower = (title + ' ' + artist).toLowerCase();
     let genre = 'Pop';
@@ -160,7 +168,7 @@ async function classifyBatchWithGemini(
     const allowedGenresList = SPOTIFY_GENRE_NAMES.join(', ');
 
     const processedItems = items.map(item => {
-      const cleanTitle = item.title && item.title !== 'Bài hát không tên' ? item.title : humanizeSlug(item.fileName || '');
+      const cleanTitle = item.title && item.title !== 'Bài hát không tên' ? item.title : cleanSlugToTitle(item.fileName || '').title;
       const artist = item.artist && item.artist !== 'Nghệ sĩ chưa rõ' ? item.artist : '';
       const searchQuery = artist ? `${artist} - ${cleanTitle}` : cleanTitle;
       return {
