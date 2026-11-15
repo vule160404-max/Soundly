@@ -11,7 +11,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Track } from '../types/music';
+import { Track, TrendingChartEntry } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
 import { splitArtistNames } from '../utils/artistSync';
 
@@ -20,6 +20,7 @@ interface TrackTableProps {
   onPlayList?: (tracks: Track[], startIndex: number) => void;
   showCover?: boolean;
   showRankAndPlays?: boolean;
+  rankMetaByTrackId?: Record<string, TrendingChartEntry>;
   customPlaylistId?: string;
   onSelectArtist?: (artistName: string) => void;
 }
@@ -29,6 +30,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   onPlayList,
   showCover = true,
   showRankAndPlays = false,
+  rankMetaByTrackId,
   customPlaylistId,
   onSelectArtist,
 }) => {
@@ -103,6 +105,77 @@ export const TrackTable: React.FC<TrackTableProps> = ({
     if (idx === 1) return 'text-[#f7f5f0] font-extrabold';
     if (idx === 2) return 'text-amber-400 font-extrabold';
     return 'text-[#7f8bb3]';
+  };
+
+  const renderRankBadge = (displayRank: number, idx: number, isCurrent: boolean) => {
+    if (showRankAndPlays && idx === 0) {
+      return (
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-[#f47b64]/20 border border-[#f47b64]/50 text-[#f47b64] font-mono tabular-nums font-extrabold text-[11px]">
+          {displayRank}
+        </span>
+      );
+    }
+    if (showRankAndPlays && idx === 1) {
+      return (
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-[#f7f5f0]/10 border border-[#f7f5f0]/30 text-[#f7f5f0] font-mono tabular-nums font-extrabold text-[11px]">
+          {displayRank}
+        </span>
+      );
+    }
+    if (showRankAndPlays && idx === 2) {
+      return (
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-amber-400/15 border border-amber-400/40 text-amber-300 font-mono tabular-nums font-extrabold text-[11px]">
+          {displayRank}
+        </span>
+      );
+    }
+    return (
+      <span className={`font-mono tabular-nums text-xs ${getRankColorClass(idx, isCurrent)}`}>
+        {displayRank}
+      </span>
+    );
+  };
+
+  const renderTrendIndicator = (meta?: TrendingChartEntry) => {
+    if (!meta) return null;
+    if (meta.isNew) {
+      return (
+        <span
+          title="Mới vào bảng xếp hạng Spotify"
+          className="text-[10px] font-bold text-[#f47b64] tracking-tight whitespace-nowrap"
+        >
+          Mới
+        </span>
+      );
+    }
+    if (meta.rankDelta > 0) {
+      return (
+        <span
+          title={`Tăng ${meta.rankDelta} bậc so với kỳ trước`}
+          className="text-[10px] font-mono tabular-nums font-bold text-emerald-400 whitespace-nowrap"
+        >
+          ▲{meta.rankDelta}
+        </span>
+      );
+    }
+    if (meta.rankDelta < 0) {
+      return (
+        <span
+          title={`Giảm ${Math.abs(meta.rankDelta)} bậc so với kỳ trước`}
+          className="text-[10px] font-mono tabular-nums font-bold text-rose-400 whitespace-nowrap"
+        >
+          ▼{Math.abs(meta.rankDelta)}
+        </span>
+      );
+    }
+    return (
+      <span
+        title="Giữ nguyên thứ hạng"
+        className="text-[10px] font-mono tabular-nums text-[#6e7ba8]"
+      >
+        —
+      </span>
+    );
   };
 
   const handleRowClick = (track: Track, index: number) => {
@@ -180,16 +253,15 @@ export const TrackTable: React.FC<TrackTableProps> = ({
             >
               {/* Rank (Top 50) + Cover Art + Info */}
               <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
-                {showRankAndPlays && (
-                  <span
-                    className={`w-6 text-center font-mono tabular-nums text-xs shrink-0 ${getRankColorClass(
-                      idx,
-                      isCurrent
-                    )}`}
-                  >
-                    {idx + 1}
-                  </span>
-                )}
+                {showRankAndPlays && (() => {
+                  const chartMeta = rankMetaByTrackId?.[track.id];
+                  return (
+                    <div className="w-8 flex flex-col items-center justify-center shrink-0 gap-0.5">
+                      {renderRankBadge(idx + 1, idx, isCurrent)}
+                      {chartMeta && renderTrendIndicator(chartMeta)}
+                    </div>
+                  );
+                })()}
 
                 <div className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-[#141d3d]">
                   <img
@@ -237,16 +309,21 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     ) : (
                       <span className="truncate">{track.artist}</span>
                     )}
-                    <span>•</span>
+                    <span>·</span>
                     <span className="font-mono tabular-nums shrink-0">{formatDuration(track.duration)}</span>
-                    {showRankAndPlays && (
-                      <>
-                        <span>•</span>
-                        <span className="font-mono tabular-nums shrink-0 text-[#8d99be]">
-                          {(Number(track.plays) || 0).toLocaleString('vi-VN')} lượt
-                        </span>
-                      </>
-                    )}
+                    {showRankAndPlays && (() => {
+                      const chartMeta = rankMetaByTrackId?.[track.id];
+                      return (
+                        <>
+                          <span>·</span>
+                          <span className="font-mono tabular-nums shrink-0 text-[#8d99be]">
+                            {chartMeta
+                              ? `#${chartMeta.spotifyRank} Spotify`
+                              : `${(Number(track.plays) || 0).toLocaleString('vi-VN')} lượt`}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -353,12 +430,14 @@ export const TrackTable: React.FC<TrackTableProps> = ({
       {isDesktop && (
       <div>
         {/* Table Header */}
-        <div className="grid grid-cols-12 gap-3 px-4 py-2.5 text-[11px] font-semibold text-[#a3aed0] uppercase tracking-wider border-b border-[#1e2a54]">
+        <div className="grid grid-cols-12 gap-3 px-4 py-2.5 text-[11px] font-semibold text-[#a3aed0] tracking-wider border-b border-[#1e2a54]">
           <div className="col-span-1 text-center">#</div>
           <div className="col-span-4">Tiêu đề</div>
           <div className={showRankAndPlays ? 'col-span-2' : 'col-span-3'}>Album</div>
           {showRankAndPlays && (
-            <div className="col-span-2 text-right">Lượt nghe</div>
+            <div className="col-span-2 text-right">
+              {rankMetaByTrackId ? 'Thứ hạng & Nghe' : 'Lượt nghe'}
+            </div>
           )}
           <div className={showRankAndPlays ? 'col-span-1' : 'col-span-2'}>Thể loại</div>
           <div className="col-span-2 text-right">Thao tác</div>
@@ -374,6 +453,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
             const savedAlbumsCount = userPlaylists.filter((pl) =>
               pl.trackIds.includes(track.id)
             ).length;
+            const chartMeta = rankMetaByTrackId?.[track.id];
 
             return (
               <div
@@ -385,8 +465,8 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     : 'hover:bg-[#141d3d] text-[#a3aed0]'
                 }`}
               >
-                {/* Column 1: Index / Play Icon */}
-                <div className="col-span-1 text-center flex items-center justify-center">
+                {/* Column 1: Index + Trend Indicator / Play Icon */}
+                <div className="col-span-1 text-center flex items-center justify-center gap-1.5">
                   {isCurrentPlaying ? (
                     <div className="flex items-end gap-0.5 h-3.5">
                       <span className="w-1 h-full bg-[#f47b64] rounded-full soundly-eq-bar" style={{ animationDelay: '0ms' }} />
@@ -395,14 +475,10 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     </div>
                   ) : (
                     <>
-                      <span
-                        className={`group-hover:hidden font-mono tabular-nums ${getRankColorClass(
-                          idx,
-                          isCurrent
-                        )}`}
-                      >
-                        {idx + 1}
-                      </span>
+                      <div className="group-hover:hidden flex items-center justify-center gap-1.5">
+                        {renderRankBadge(idx + 1, idx, isCurrent)}
+                        {chartMeta && renderTrendIndicator(chartMeta)}
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -464,10 +540,12 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                   {track.album}
                 </div>
 
-                {/* Optional Column: Play Count (Top 50) */}
+                {/* Optional Column: Spotify Rank + Play Count (Top 50) */}
                 {showRankAndPlays && (
                   <div className="col-span-2 text-right font-mono tabular-nums text-[11px] text-[#a3aed0] group-hover:text-[#f7f5f0] transition-colors truncate">
-                    {formatPlays(track.plays)}
+                    {chartMeta
+                      ? `#${chartMeta.spotifyRank} Spotify · ${(Number(track.plays) || 0).toLocaleString('vi-VN')} lượt`
+                      : formatPlays(track.plays)}
                   </div>
                 )}
 

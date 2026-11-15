@@ -1,4 +1,4 @@
-import { ArtistProfile, Track } from '../types/music';
+import { ArtistProfile, Playlist, Track } from '../types/music';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
 
 const DEFAULT_COVER_FRAGMENTS = [
@@ -478,6 +478,7 @@ export function matchesTrackSearch(track: Track, rawQuery: string): boolean {
 }
 
 export interface SearchSuggestionsResult {
+  albums: Playlist[];
   artists: ArtistProfile[];
   tracks: Track[];
   genres: string[];
@@ -486,16 +487,40 @@ export interface SearchSuggestionsResult {
 export function getSearchSuggestions(
   rawQuery: string,
   allTracks: Track[],
-  artists: ArtistProfile[]
+  artists: ArtistProfile[],
+  publicAlbums: Playlist[] = []
 ): SearchSuggestionsResult {
   const q = normalizeSearchText(rawQuery);
   if (!q) {
     return {
+      albums: [],
       artists: artists.slice(0, 4),
       tracks: allTracks.slice(0, 5),
       genres: [],
     };
   }
+
+  const scoredAlbums = publicAlbums
+    .map(album => {
+      const normTitle = normalizeSearchText(album.title || '');
+      const normDesc = normalizeSearchText(album.description || '');
+      const titleMatch = normTitle.includes(q);
+      const descMatch = normDesc.includes(q);
+      if (!titleMatch && !descMatch) return null;
+
+      let score = 0;
+      if (normTitle === q) score += 130;
+      else if (normTitle.startsWith(q)) score += 80;
+      else if (normTitle.includes(` ${q}`)) score += 55;
+      else if (titleMatch) score += 40;
+      if (descMatch) score += 15;
+      score += Math.min(album.trackIds?.length || 0, 15);
+      return { album, score };
+    })
+    .filter((item): item is { album: Playlist; score: number } => item !== null)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(item => item.album);
 
   const scoredArtists = artists
     .map(artist => {
@@ -565,6 +590,7 @@ export function getSearchSuggestions(
   }).slice(0, 2);
 
   return {
+    albums: scoredAlbums,
     artists: scoredArtists,
     tracks: scoredTracks,
     genres: matchedGenres,

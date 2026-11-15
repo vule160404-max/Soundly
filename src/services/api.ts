@@ -1,6 +1,13 @@
-import { Track, Playlist, GenreCategory, LyricLine } from '../types/music';
+import {
+  Track,
+  Playlist,
+  GenreCategory,
+  LyricLine,
+  TrendingChartRegion,
+  TrendingChartSnapshot,
+} from '../types/music';
 import { INITIAL_TRACKS, INITIAL_PLAYLISTS, INITIAL_GENRES } from '../data/mockTracks';
-import { db } from '../lib/firebase';
+import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import {
   deduplicateTracksList,
@@ -271,10 +278,78 @@ export const musicApi = {
       const freshMap = new Map<string, Track>();
       for (const t of allTracks) freshMap.set(t.id, t);
 
-      const mergeAndNotify = (incoming: Track[]) => {
+      const getR2AudioKey = (track: Track): string => {
+        if (track.r2AudioKey && track.r2AudioKey.startsWith('tracks/')) {
+          return track.r2AudioKey;
+        }
+        const raw = (track.audioUrl || '').trim();
+        if (!raw) return '';
+        if (raw.startsWith('/api/r2/stream')) {
+          try {
+            const parsed = new URL(raw, window.location.origin);
+            return (parsed.searchParams.get('key') || '').replace(/^\/+/, '');
+          } catch {
+            return '';
+          }
+        }
+        if (raw.includes('.r2.dev/') || raw.includes('.r2.cloudflarestorage.com/')) {
+          try {
+            const parsed = new URL(raw);
+            return parsed.pathname.replace(/^\/+/, '');
+          } catch {
+            return '';
+          }
+        }
+        return '';
+      };
+
+      const isR2ManagedTrack = (track: Track): boolean => {
+        if (track.id.startsWith('spotflow-') || track.id.startsWith('r2-')) return true;
+        if (track.r2AudioKey && track.r2AudioKey.startsWith('tracks/')) return true;
+        const url = (track.audioUrl || '').trim();
+        return (
+          url.includes('.r2.dev/') ||
+          url.includes('.r2.cloudflarestorage.com/') ||
+          url.includes('/api/r2/stream')
+        );
+      };
+
+      let authoritativeR2Ids: Set<string> | null = null;
+      let authoritativeR2Keys: Set<string> | null = null;
+
+      const mergeAndNotify = (
+        incoming: Track[],
+        isAuthoritativeR2: boolean = false
+      ) => {
         let changed = false;
+
+        if (isAuthoritativeR2 && incoming.length > 0) {
+          authoritativeR2Ids = new Set(incoming.map(t => t.id));
+          authoritativeR2Keys = new Set(
+            incoming.map(getR2AudioKey).filter(Boolean)
+          );
+
+          for (const [id, existing] of Array.from(freshMap.entries())) {
+            if (!isR2ManagedTrack(existing)) continue;
+            const key = getR2AudioKey(existing);
+            const idAlive = authoritativeR2Ids.has(id);
+            const keyAlive = Boolean(key && authoritativeR2Keys.has(key));
+            if (!idAlive && !keyAlive) {
+              freshMap.delete(id);
+              changed = true;
+            }
+          }
+        }
+
         for (const rawTrack of incoming) {
           if (!rawTrack || !rawTrack.id) continue;
+          if (!isAuthoritativeR2 && authoritativeR2Ids && isR2ManagedTrack(rawTrack)) {
+            const key = getR2AudioKey(rawTrack);
+            const idAlive = authoritativeR2Ids.has(rawTrack.id);
+            const keyAlive = Boolean(key && authoritativeR2Keys?.has(key));
+            if (!idAlive && !keyAlive) continue;
+          }
+
           const normalized = healTrackVietnameseDisplay({
             ...rawTrack,
             audioUrl: normalizePlayableUrl(rawTrack.audioUrl),
@@ -329,7 +404,7 @@ export const musicApi = {
             const data = d.data() as Track;
             if (data && data.id) fsTracks.push(data);
           });
-          if (fsTracks.length > 0) mergeAndNotify(fsTracks);
+          if (fsTracks.length > 0) mergeAndNotify(fsTracks, false);
         })
         .catch(() => null);
 
@@ -337,7 +412,7 @@ export const musicApi = {
         .then(res => (res.ok && isJsonResponse(res) ? res.json() : null))
         .then(apiTracks => {
           if (Array.isArray(apiTracks) && apiTracks.length > 0) {
-            mergeAndNotify(apiTracks);
+            mergeAndNotify(apiTracks, true);
           }
         })
         .catch(() => null);
@@ -395,6 +470,440 @@ export const musicApi = {
 
   async getPlaylists(): Promise<Playlist[]> {
     return INITIAL_PLAYLISTS;
+  },
+
+  getInitialCachedPublicAlbums(): Playlist[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('soundly_public_albums_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter((a): a is Playlist => Boolean(a && a.id && a.title))
+        : [];
+    } catch {
+      return [];
+    }
+  },
+
+  getInitialCachedTrendingCharts(): {
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  } {
+    if (typeof window === 'undefined') return { vn: null, global: null };
+    try {
+      const raw = localStorage.getItem('soundly_trending_charts_v1');
+      if (!raw) return { vn: null, global: null };
+      const parsed = JSON.parse(raw);
+      return {
+        vn: parsed?.vn?.entries ? (parsed.vn as TrendingChartSnapshot) : null,
+        global: parsed?.global?.entries ? (parsed.global as TrendingChartSnapshot) : null,
+      };
+    } catch {
+      return { vn: null, global: null };
+    }
+  },
+
+  async getTrendingCharts(options?: {
+    catalogTracks?: Track[];
+    isAdmin?: boolean;
+  }): Promise<{
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  }> {
+    const saveCache = (charts: {
+      vn: TrendingChartSnapshot | null;
+      global: TrendingChartSnapshot | null;
+    }) => {
+      try {
+        localStorage.setItem('soundly_trending_charts_v1', JSON.stringify(charts));
+      } catch {
+        // ignore quota errors
+      }
+    };
+
+    const pickFresher = (
+      a: TrendingChartSnapshot | null | undefined,
+      b: TrendingChartSnapshot | null | undefined
+    ): TrendingChartSnapshot | null => {
+      if (!a && !b) return null;
+      if (!a) return b || null;
+      if (!b) return a || null;
+      const ta = Date.parse(a.updatedAt || '') || 0;
+      const tb = Date.parse(b.updatedAt || '') || 0;
+      return tb >= ta ? b : a;
+    };
+
+    const [fsResult, apiResult] = await Promise.all([
+      (async (): Promise<{
+        vn: TrendingChartSnapshot | null;
+        global: TrendingChartSnapshot | null;
+      }> => {
+        let vnSnap: TrendingChartSnapshot | null = null;
+        let globalSnap: TrendingChartSnapshot | null = null;
+        try {
+          const snap = await getDocs(collection(db, 'soundly_charts'));
+          snap.forEach(d => {
+            const data = d.data() as TrendingChartSnapshot;
+            if (data?.region === 'vn' && Array.isArray(data.entries)) {
+              vnSnap = data;
+            } else if (data?.region === 'global' && Array.isArray(data.entries)) {
+              globalSnap = data;
+            }
+          });
+        } catch (err) {
+          try {
+            handleFirestoreError(err, OperationType.LIST, 'soundly_charts');
+          } catch {
+            // fallback cleanly to API / cache
+          }
+        }
+        return { vn: vnSnap, global: globalSnap };
+      })(),
+      (async (): Promise<{
+        vn: TrendingChartSnapshot | null;
+        global: TrendingChartSnapshot | null;
+        autoSynced: boolean;
+      }> => {
+        let vnSnap: TrendingChartSnapshot | null = null;
+        let globalSnap: TrendingChartSnapshot | null = null;
+        let autoSynced = false;
+        try {
+          const res = await fetch('/api/tracks/trending-chart');
+          if (res.ok && isJsonResponse(res)) {
+            const data = await res.json();
+            if (data?.charts?.vn) vnSnap = data.charts.vn as TrendingChartSnapshot;
+            if (data?.charts?.global) globalSnap = data.charts.global as TrendingChartSnapshot;
+            autoSynced = Boolean(data?.autoSynced);
+          }
+        } catch {
+          // ignore network errors
+        }
+        return { vn: vnSnap, global: globalSnap, autoSynced };
+      })(),
+    ]);
+
+    const fsVn = fsResult.vn;
+    const fsGlobal = fsResult.global;
+    const apiVn = apiResult.vn;
+    const apiGlobal = apiResult.global;
+    const apiAutoSynced = apiResult.autoSynced;
+
+    let vn = pickFresher(fsVn, apiVn);
+    let global = pickFresher(fsGlobal, apiGlobal);
+
+    if (!vn && !global) {
+      const cached = this.getInitialCachedTrendingCharts();
+      vn = cached.vn;
+      global = cached.global;
+    }
+
+    const isStale = (snap: TrendingChartSnapshot | null): boolean => {
+      if (!snap || !snap.updatedAt) return true;
+      const nextMs = snap.nextAutoSyncAt ? Date.parse(snap.nextAutoSyncAt) : NaN;
+      if (Number.isFinite(nextMs)) return Date.now() >= nextMs;
+      return Date.now() - (Date.parse(snap.updatedAt) || 0) >= 12 * 60 * 60 * 1000;
+    };
+
+    // If Admin opens app and charts are empty/stale (or server auto-synced newer than Firestore), sync & mirror to Firestore
+    if (options?.isAdmin) {
+      if (
+        (isStale(vn) || isStale(global)) &&
+        options.catalogTracks &&
+        options.catalogTracks.length > 0 &&
+        !apiAutoSynced
+      ) {
+        try {
+          return await this.syncTrendingCharts({
+            region: 'all',
+            catalogTracks: options.catalogTracks,
+          });
+        } catch {
+          // fallback to whatever was loaded
+        }
+      } else {
+        const fsSyncPromises: Promise<void>[] = [];
+        if (vn && (!fsVn || Date.parse(vn.updatedAt) > Date.parse(fsVn.updatedAt || ''))) {
+          fsSyncPromises.push(persistChartToFirestore(vn));
+        }
+        if (global && (!fsGlobal || Date.parse(global.updatedAt) > Date.parse(fsGlobal.updatedAt || ''))) {
+          fsSyncPromises.push(persistChartToFirestore(global));
+        }
+        if (fsSyncPromises.length > 0) {
+          await Promise.allSettled(fsSyncPromises);
+        }
+      }
+    }
+
+    const result = { vn, global };
+    if (vn || global) {
+      saveCache(result);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('soundly:charts-refreshed', { detail: { charts: result } })
+        );
+      }
+    }
+    return result;
+  },
+
+  async syncTrendingCharts(params: {
+    region?: TrendingChartRegion | 'all';
+    customSpotifyUrl?: string;
+    clearCustomUrl?: boolean;
+    catalogTracks?: Track[];
+  }): Promise<{
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  }> {
+    const catalogSummary = Array.isArray(params.catalogTracks)
+      ? params.catalogTracks.map(t => ({
+          id: t.id,
+          title: t.title,
+          artist: t.artist,
+          audioUrl: t.audioUrl,
+          ...(t.spotifyTrackId ? { spotifyTrackId: t.spotifyTrackId } : {}),
+          ...(t.r2AudioKey ? { r2AudioKey: t.r2AudioKey } : {}),
+        }))
+      : undefined;
+
+    const res = await fetch('/api/tracks/trending-chart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        region: params.region || 'all',
+        ...(params.customSpotifyUrl !== undefined
+          ? { customSpotifyUrl: params.customSpotifyUrl }
+          : {}),
+        ...(params.clearCustomUrl ? { clearCustomUrl: true } : {}),
+        ...(catalogSummary ? { catalogSummary } : {}),
+      }),
+    });
+
+    if (!isJsonResponse(res)) {
+      throw new Error(`Máy chủ chưa sẵn sàng phản hồi (HTTP ${res.status}).`);
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Đồng bộ Bảng Xếp Hạng Spotify thất bại.');
+    }
+
+    const result = {
+      vn: (data?.charts?.vn as TrendingChartSnapshot | null) || null,
+      global: (data?.charts?.global as TrendingChartSnapshot | null) || null,
+    };
+
+    try {
+      localStorage.setItem('soundly_trending_charts_v1', JSON.stringify(result));
+    } catch {
+      // ignore
+    }
+
+    const fsWrites: Promise<void>[] = [];
+    if (result.vn) fsWrites.push(persistChartToFirestore(result.vn));
+    if (result.global) fsWrites.push(persistChartToFirestore(result.global));
+    await Promise.allSettled(fsWrites);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('soundly:charts-refreshed', { detail: { charts: result } })
+      );
+    }
+    return result;
+  },
+
+  async getPublicAlbums(): Promise<Playlist[]> {
+    const saveCache = (albums: Playlist[]) => {
+      try {
+        localStorage.setItem('soundly_public_albums_v1', JSON.stringify(albums));
+      } catch {
+        // ignore storage quota errors
+      }
+    };
+
+    const normalizeAlbum = (raw: Partial<Playlist>): Playlist | null => {
+      if (!raw || !raw.id || !raw.title) return null;
+      const cleanCover =
+        raw.coverUrl && !raw.coverUrl.includes('photo-1511671782779-c97d3d27a1d4')
+          ? normalizePlayableUrl(raw.coverUrl)
+          : '/assets/aistudio/soundly-default-cover.svg';
+      return {
+        id: String(raw.id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128),
+        title: String(raw.title).trim().slice(0, 200),
+        description: String(raw.description || '').trim().slice(0, 500),
+        coverUrl: cleanCover,
+        trackIds: Array.isArray(raw.trackIds)
+          ? Array.from(new Set(raw.trackIds.filter((x): x is string => typeof x === 'string'))).slice(0, 1000)
+          : [],
+        isPublic: true,
+        createdAt: raw.createdAt || new Date().toISOString(),
+        updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+        ...(raw.createdBy ? { createdBy: raw.createdBy } : {}),
+        ...(raw.spotifyUrl ? { spotifyUrl: raw.spotifyUrl } : {}),
+      };
+    };
+
+    const mergedMap = new Map<string, Playlist>();
+
+    const mergeIncoming = (incoming: Partial<Playlist>[]) => {
+      for (const item of incoming) {
+        const norm = normalizeAlbum(item);
+        if (!norm) continue;
+        const prev = mergedMap.get(norm.id);
+        if (!prev) {
+          mergedMap.set(norm.id, norm);
+        } else {
+          const prevTs = Date.parse(prev.updatedAt || prev.createdAt || '') || 0;
+          const nextTs = Date.parse(norm.updatedAt || norm.createdAt || '') || 0;
+          mergedMap.set(norm.id, nextTs >= prevTs ? norm : prev);
+        }
+      }
+    };
+
+    let fsSucceeded = false;
+    let apiSucceeded = false;
+
+    const [fsRes, apiRes] = await Promise.allSettled([
+      getDocs(collection(db, 'soundly_albums'))
+        .then(snap => {
+          fsSucceeded = true;
+          const list: Partial<Playlist>[] = [];
+          snap.forEach(d => list.push(d.data() as Partial<Playlist>));
+          return list;
+        })
+        .catch(err => {
+          try {
+            handleFirestoreError(err, OperationType.LIST, 'soundly_albums');
+          } catch {
+            // fallback cleanly to R2/cache below
+          }
+          return [] as Partial<Playlist>[];
+        }),
+      fetch('/api/tracks/public-albums')
+        .then(async res => {
+          if (res.ok && isJsonResponse(res)) {
+            apiSucceeded = true;
+            return await res.json();
+          }
+          return [] as Partial<Playlist>[];
+        })
+        .catch(() => [] as Partial<Playlist>[]),
+    ]);
+
+    if (!fsSucceeded && !apiSucceeded) {
+      mergeIncoming(this.getInitialCachedPublicAlbums());
+    } else {
+      if (fsRes.status === 'fulfilled' && Array.isArray(fsRes.value) && fsRes.value.length > 0) {
+        mergeIncoming(fsRes.value);
+      }
+      if (apiRes.status === 'fulfilled' && Array.isArray(apiRes.value) && apiRes.value.length > 0) {
+        mergeIncoming(apiRes.value);
+      }
+    }
+
+    const finalAlbums = Array.from(mergedMap.values()).sort((a, b) => {
+      const ta = Date.parse(a.updatedAt || a.createdAt || '') || 0;
+      const tb = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+      return tb - ta;
+    });
+
+    saveCache(finalAlbums);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('soundly:public-albums-refreshed', {
+          detail: { albums: finalAlbums },
+        })
+      );
+    }
+    return finalAlbums;
+  },
+
+  async savePublicAlbum(albumInput: Partial<Playlist> & { title: string }): Promise<Playlist> {
+    const nowIso = new Date().toISOString();
+    const safeId = String(albumInput.id || `public-album-${Date.now()}`)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 128);
+
+    const payload: Playlist = {
+      id: safeId,
+      title: String(albumInput.title || 'Album Soundly').trim().slice(0, 200),
+      description: String(albumInput.description || '').trim().slice(0, 500),
+      coverUrl:
+        String(albumInput.coverUrl || '').trim().slice(0, 2000) ||
+        '/assets/aistudio/soundly-default-cover.svg',
+      trackIds: Array.isArray(albumInput.trackIds)
+        ? Array.from(new Set(albumInput.trackIds.filter((x): x is string => typeof x === 'string'))).slice(0, 1000)
+        : [],
+      isPublic: true,
+      createdAt: String(albumInput.createdAt || nowIso).slice(0, 64),
+      updatedAt: nowIso,
+      ...(albumInput.createdBy ? { createdBy: String(albumInput.createdBy).slice(0, 128) } : {}),
+      ...(albumInput.spotifyUrl ? { spotifyUrl: String(albumInput.spotifyUrl).slice(0, 500) } : {}),
+    };
+
+    const cached = this.getInitialCachedPublicAlbums().filter(a => a.id !== payload.id);
+    const nextCache = [payload, ...cached];
+    try {
+      localStorage.setItem('soundly_public_albums_v1', JSON.stringify(nextCache));
+    } catch {
+      // ignore
+    }
+
+    const fsDocData: Record<string, unknown> = {
+      id: payload.id,
+      title: payload.title,
+      description: payload.description,
+      coverUrl: payload.coverUrl,
+      trackIds: payload.trackIds,
+      isPublic: true,
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+    };
+    if (payload.createdBy) fsDocData.createdBy = payload.createdBy;
+    if (payload.spotifyUrl) fsDocData.spotifyUrl = payload.spotifyUrl;
+
+    await Promise.allSettled([
+      setDoc(doc(db, 'soundly_albums', payload.id), fsDocData).catch(err => {
+        try {
+          handleFirestoreError(err, OperationType.WRITE, `soundly_albums/${payload.id}`);
+        } catch {
+          // R2 backup still persists
+        }
+      }),
+      fetch('/api/tracks/public-albums', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ album: payload }),
+      }),
+    ]);
+
+    return payload;
+  },
+
+  async deletePublicAlbum(albumId: string): Promise<void> {
+    const safeId = String(albumId || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
+    if (!safeId) return;
+
+    const nextCache = this.getInitialCachedPublicAlbums().filter(a => a.id !== safeId);
+    try {
+      localStorage.setItem('soundly_public_albums_v1', JSON.stringify(nextCache));
+    } catch {
+      // ignore
+    }
+
+    await Promise.allSettled([
+      deleteDoc(doc(db, 'soundly_albums', safeId)).catch(err => {
+        try {
+          handleFirestoreError(err, OperationType.DELETE, `soundly_albums/${safeId}`);
+        } catch {
+          // R2 deletion still proceeds
+        }
+      }),
+      fetch(`/api/tracks/public-albums?albumId=${encodeURIComponent(safeId)}`, {
+        method: 'DELETE',
+      }),
+    ]);
   },
 
   async getLyrics(trackId: string): Promise<LyricLine[]> {
@@ -1143,3 +1652,36 @@ async function uploadChunkedViaServerProxy(
   onProgress?.(100);
   return completeData;
 }
+
+async function persistChartToFirestore(chart: TrendingChartSnapshot): Promise<void> {
+  if (!chart?.id) return;
+  const safeId = String(chart.id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
+  const payload: Record<string, unknown> = {
+    id: safeId,
+    region: chart.region === 'global' ? 'global' : 'vn',
+    title: String(chart.title || 'Bảng Xếp Hạng Thịnh Hành').slice(0, 200),
+    sourceLabel: String(chart.sourceLabel || 'Spotify Top 50').slice(0, 200),
+    sourceUrl: String(chart.sourceUrl || '').slice(0, 500),
+    updatedAt: String(chart.updatedAt || new Date().toISOString()).slice(0, 64),
+    nextAutoSyncAt: String(
+      chart.nextAutoSyncAt || new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()
+    ).slice(0, 64),
+    totalSpotifyEntries: Math.max(0, Number(chart.totalSpotifyEntries) || 0),
+    matchedCount: Math.max(0, Number(chart.matchedCount) || 0),
+    entries: Array.isArray(chart.entries) ? chart.entries.slice(0, 100) : [],
+    missingEntries: Array.isArray(chart.missingEntries) ? chart.missingEntries.slice(0, 100) : [],
+  };
+  if (chart.customSpotifyUrl) {
+    payload.customSpotifyUrl = String(chart.customSpotifyUrl).slice(0, 500);
+  }
+  try {
+    await setDoc(doc(db, 'soundly_charts', safeId), payload);
+  } catch (err) {
+    try {
+      handleFirestoreError(err, OperationType.WRITE, `soundly_charts/${safeId}`);
+    } catch {
+      // R2 backup still persists
+    }
+  }
+}
+

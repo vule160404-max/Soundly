@@ -35,6 +35,12 @@ import {
   deleteR2CatalogTrack,
   getR2ObjectRange,
   backfillR2CatalogId3Metadata,
+  getR2PublicAlbums,
+  upsertR2PublicAlbum,
+  deleteR2PublicAlbum,
+  getR2TrendingCharts,
+  saveR2TrendingCharts,
+  R2StoredAlbum,
 } from './server-r2';
 import crypto from 'node:crypto';
 import {
@@ -49,6 +55,13 @@ import {
 } from './api/_lib/spotflow';
 import { fetchSpotifyCollectionMetadata } from './api/_lib/spotifyAlbum';
 import {
+  AUTO_SYNC_TTL_MS,
+  MatchableCatalogTrack,
+  TrendingChartRegion,
+  TrendingChartSnapshot,
+  syncSpotifyTrendingChart,
+} from './api/_lib/spotifyChart';
+import {
   classifyBatchWithGemini,
   ClassifyInputTrack,
 } from './api/_lib/ai';
@@ -57,6 +70,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const UPLOADED_TRACKS_FILE = path.join(__dirname, 'saved_uploaded_tracks.json');
+const PUBLIC_ALBUMS_FILE = path.join(__dirname, 'saved_public_albums.json');
+const TRENDING_CHARTS_FILE = path.join(__dirname, 'saved_trending_charts.json');
 
 async function startServer() {
   const app = express();
@@ -75,10 +90,53 @@ async function startServer() {
     console.warn('Could not load saved uploaded tracks from disk:', e);
   }
 
+  let publicAlbums: Playlist[] = [];
+  try {
+    if (fs.existsSync(PUBLIC_ALBUMS_FILE)) {
+      const raw = fs.readFileSync(PUBLIC_ALBUMS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) publicAlbums = parsed;
+    }
+  } catch (e) {
+    console.warn('Could not load saved public albums from disk:', e);
+  }
+
+  let trendingCharts: {
+    vn?: TrendingChartSnapshot | null;
+    global?: TrendingChartSnapshot | null;
+  } = {};
+  try {
+    if (fs.existsSync(TRENDING_CHARTS_FILE)) {
+      const raw = fs.readFileSync(TRENDING_CHARTS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        trendingCharts = parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load saved trending charts from disk:', e);
+  }
+
   let tracks: Track[] = [...uploadedTracks, ...INITIAL_TRACKS].map(t =>
     healTrackVietnameseDisplay(t)
   );
   const playlists: Playlist[] = [...INITIAL_PLAYLISTS];
+
+  function persistTrendingCharts() {
+    try {
+      fs.writeFileSync(TRENDING_CHARTS_FILE, JSON.stringify(trendingCharts, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('Could not persist trending charts to disk:', e);
+    }
+  }
+
+  function persistPublicAlbums() {
+    try {
+      fs.writeFileSync(PUBLIC_ALBUMS_FILE, JSON.stringify(publicAlbums, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('Could not persist public albums to disk:', e);
+    }
+  }
 
   function persistTracks() {
     try {
@@ -304,13 +362,60 @@ async function startServer() {
     }
   });
 
+  function extractServerR2AudioKey(t: Track): string {
+    if (t.r2AudioKey && t.r2AudioKey.startsWith('tracks/')) return t.r2AudioKey;
+    const raw = (t.audioUrl || '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/api/r2/stream')) {
+      try {
+        return (new URL(raw, 'http://localhost').searchParams.get('key') || '').replace(/^\/+/, '');
+      } catch {
+        return '';
+      }
+    }
+    if (raw.includes('.r2.dev/') || raw.includes('.r2.cloudflarestorage.com/')) {
+      try {
+        return new URL(raw).pathname.replace(/^\/+/, '');
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function isServerR2ManagedTrack(t: Track): boolean {
+    if (t.id.startsWith('spotflow-') || t.id.startsWith('r2-')) return true;
+    if (t.r2AudioKey && t.r2AudioKey.startsWith('tracks/')) return true;
+    const url = (t.audioUrl || '').trim();
+    return (
+      url.includes('.r2.dev/') ||
+      url.includes('.r2.cloudflarestorage.com/') ||
+      url.includes('/api/r2/stream')
+    );
+  }
+
   app.get('/api/tracks', async (req, res) => {
     const { q, genre } = req.query;
     let results: Track[] = [...tracks];
 
     if (isR2Configured()) {
-      const r2Tracks = await getR2CatalogTracks();
-      results = [...results, ...(r2Tracks as unknown as Track[])];
+      const r2Tracks = (await getR2CatalogTracks()) as unknown as Track[];
+      if (r2Tracks.length > 0) {
+        const r2Ids = new Set(r2Tracks.map(t => t.id));
+        const r2Keys = new Set(r2Tracks.map(extractServerR2AudioKey).filter(Boolean));
+        const prunedLocal = tracks.filter(t => {
+          if (!isServerR2ManagedTrack(t)) return true;
+          const k = extractServerR2AudioKey(t);
+          return r2Ids.has(t.id) || Boolean(k && r2Keys.has(k));
+        });
+        if (prunedLocal.length !== tracks.length) {
+          tracks = prunedLocal;
+          persistTracks();
+        }
+        results = [...tracks, ...r2Tracks];
+      } else {
+        results = [...tracks, ...r2Tracks];
+      }
     }
     results = deduplicateTracksList(results).deduped;
 
@@ -340,11 +445,264 @@ async function startServer() {
     res.json(payload);
   });
 
+  app.get('/api/tracks/public-albums', async (_req, res) => {
+    try {
+      if (isR2Configured()) {
+        const r2List = await getR2PublicAlbums();
+        publicAlbums = r2List.map(a => ({ ...a, isPublic: true }));
+        persistPublicAlbums();
+      }
+      res.json(publicAlbums);
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to load public albums',
+      });
+    }
+  });
+
+  app.post('/api/tracks/public-albums', async (req, res) => {
+    try {
+      const payload = (
+        req.body?.album && typeof req.body.album === 'object' ? req.body.album : req.body
+      ) as Partial<R2StoredAlbum>;
+      if (!payload?.title || !String(payload.title).trim()) {
+        return res.status(400).json({ error: 'Album title is required' });
+      }
+      const saved = isR2Configured()
+        ? await upsertR2PublicAlbum(payload)
+        : {
+            id: String(payload.id || `public-album-${Date.now()}`)
+              .replace(/[^a-zA-Z0-9_-]/g, '_')
+              .slice(0, 128),
+            title: String(payload.title).trim().slice(0, 200),
+            description: String(payload.description || '').trim().slice(0, 500),
+            coverUrl:
+              String(payload.coverUrl || '').trim().slice(0, 2000) ||
+              '/assets/aistudio/soundly-default-cover.svg',
+            trackIds: Array.isArray(payload.trackIds)
+              ? Array.from(new Set(payload.trackIds.filter((x): x is string => typeof x === 'string'))).slice(0, 1000)
+              : [],
+            isPublic: true,
+            createdAt: payload.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            ...(payload.createdBy ? { createdBy: String(payload.createdBy).slice(0, 128) } : {}),
+            ...(payload.spotifyUrl ? { spotifyUrl: String(payload.spotifyUrl).slice(0, 500) } : {}),
+          };
+
+      const idx = publicAlbums.findIndex(a => a.id === saved.id);
+      if (idx !== -1) {
+        publicAlbums[idx] = saved;
+      } else {
+        publicAlbums.unshift(saved);
+      }
+      persistPublicAlbums();
+      res.json({ success: true, album: saved });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to save public album',
+      });
+    }
+  });
+
+  app.delete('/api/tracks/public-albums', async (req, res) => {
+    try {
+      const targetId = String(
+        req.query.albumId || req.query.id || req.body?.albumId || req.body?.id || ''
+      ).trim();
+      if (!targetId) {
+        return res.status(400).json({ error: 'albumId is required' });
+      }
+      publicAlbums = publicAlbums.filter(a => a.id !== targetId);
+      persistPublicAlbums();
+      if (isR2Configured()) {
+        await deleteR2PublicAlbum(targetId);
+      }
+      res.json({ success: true, deletedId: targetId });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to delete public album',
+      });
+    }
+  });
+
+  const isChartSnapshotStale = (snap?: TrendingChartSnapshot | null): boolean => {
+    if (!snap || !snap.updatedAt) return true;
+    const nextSyncMs = snap.nextAutoSyncAt ? Date.parse(snap.nextAutoSyncAt) : NaN;
+    if (Number.isFinite(nextSyncMs)) return Date.now() >= nextSyncMs;
+    const updatedMs = Date.parse(snap.updatedAt);
+    return !Number.isFinite(updatedMs) || Date.now() - updatedMs >= AUTO_SYNC_TTL_MS;
+  };
+
+  const getMergedMatchableCatalog = async (
+    extraTracks?: MatchableCatalogTrack[]
+  ): Promise<MatchableCatalogTrack[]> => {
+    const map = new Map<string, MatchableCatalogTrack>();
+    if (isR2Configured()) {
+      const r2Tracks = await getR2CatalogTracks();
+      for (const t of r2Tracks) {
+        map.set(t.id, t);
+      }
+    }
+    for (const t of tracks) {
+      if (!map.has(t.id)) {
+        map.set(t.id, t);
+      }
+    }
+    if (Array.isArray(extraTracks)) {
+      for (const t of extraTracks) {
+        if (t && t.id && !map.has(t.id)) {
+          map.set(t.id, t);
+        }
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  app.get('/api/tracks/trending-chart', async (req, res) => {
+    try {
+      const allowAutoSync = req.query.autoSync !== '0';
+      if (isR2Configured()) {
+        const r2Charts = await getR2TrendingCharts();
+        if (r2Charts.vn) trendingCharts.vn = r2Charts.vn as unknown as TrendingChartSnapshot;
+        if (r2Charts.global) trendingCharts.global = r2Charts.global as unknown as TrendingChartSnapshot;
+      }
+
+      let vnChart = trendingCharts.vn || null;
+      let globalChart = trendingCharts.global || null;
+      let autoSynced = false;
+
+      if (allowAutoSync && (isChartSnapshotStale(vnChart) || isChartSnapshotStale(globalChart))) {
+        const catalog = await getMergedMatchableCatalog();
+        if (catalog.length > 0) {
+          if (isChartSnapshotStale(vnChart)) {
+            try {
+              vnChart = await syncSpotifyTrendingChart({
+                region: 'vn',
+                catalogTracks: catalog,
+                previousSnapshot: vnChart,
+                customSpotifyUrl: vnChart?.customSpotifyUrl,
+              });
+              trendingCharts.vn = vnChart;
+              autoSynced = true;
+            } catch (err) {
+              console.warn('[TrendingChart] Auto-sync VN failed:', err);
+            }
+          }
+          if (isChartSnapshotStale(globalChart)) {
+            try {
+              globalChart = await syncSpotifyTrendingChart({
+                region: 'global',
+                catalogTracks: catalog,
+                previousSnapshot: globalChart,
+                customSpotifyUrl: globalChart?.customSpotifyUrl,
+              });
+              trendingCharts.global = globalChart;
+              autoSynced = true;
+            } catch (err) {
+              console.warn('[TrendingChart] Auto-sync Global failed:', err);
+            }
+          }
+          if (autoSynced) {
+            persistTrendingCharts();
+            if (isR2Configured()) {
+              await saveR2TrendingCharts({
+                vn: (trendingCharts.vn || null) as unknown as Record<string, unknown> | null,
+                global: (trendingCharts.global || null) as unknown as Record<string, unknown> | null,
+              });
+            }
+          }
+        }
+      }
+
+      res.json({
+        charts: {
+          vn: vnChart,
+          global: globalChart,
+        },
+        autoSynced,
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Không thể tải Bảng Xếp Hạng Thịnh Hành.',
+      });
+    }
+  });
+
+  app.post('/api/tracks/trending-chart', async (req, res) => {
+    try {
+      const targetRegion = (req.body?.region || 'all') as TrendingChartRegion | 'all';
+      const customSpotifyUrl =
+        typeof req.body?.customSpotifyUrl === 'string' ? req.body.customSpotifyUrl : undefined;
+      const clearCustomUrl = Boolean(req.body?.clearCustomUrl);
+      const catalogSummary = Array.isArray(req.body?.catalogSummary)
+        ? (req.body.catalogSummary as MatchableCatalogTrack[])
+        : undefined;
+
+      if (isR2Configured()) {
+        const r2Charts = await getR2TrendingCharts(true);
+        if (r2Charts.vn) trendingCharts.vn = r2Charts.vn as unknown as TrendingChartSnapshot;
+        if (r2Charts.global) trendingCharts.global = r2Charts.global as unknown as TrendingChartSnapshot;
+      }
+
+      const regions: TrendingChartRegion[] =
+        targetRegion === 'vn'
+          ? ['vn']
+          : targetRegion === 'global'
+            ? ['global']
+            : ['vn', 'global'];
+
+      const catalog = await getMergedMatchableCatalog(catalogSummary);
+
+      for (const reg of regions) {
+        const prevSnap = trendingCharts[reg] || null;
+        const resolvedCustomUrl = clearCustomUrl
+          ? undefined
+          : customSpotifyUrl !== undefined
+            ? customSpotifyUrl
+            : prevSnap?.customSpotifyUrl;
+
+        trendingCharts[reg] = await syncSpotifyTrendingChart({
+          region: reg,
+          catalogTracks: catalog,
+          previousSnapshot: prevSnap,
+          customSpotifyUrl: resolvedCustomUrl,
+        });
+      }
+
+      persistTrendingCharts();
+      if (isR2Configured()) {
+        await saveR2TrendingCharts({
+          vn: (trendingCharts.vn || null) as unknown as Record<string, unknown> | null,
+          global: (trendingCharts.global || null) as unknown as Record<string, unknown> | null,
+        });
+      }
+
+      res.json({
+        success: true,
+        charts: {
+          vn: trendingCharts.vn || null,
+          global: trendingCharts.global || null,
+        },
+      });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error:
+          err instanceof Error ? err.message : 'Đồng bộ BXH Spotify thất bại.',
+      });
+    }
+  });
+
   app.get('/api/tracks/:id', async (req, res) => {
-    let track = tracks.find(t => t.id === req.params.id);
-    if (!track && isR2Configured()) {
+    let track: Track | undefined;
+    if (isR2Configured()) {
       const r2Tracks = await getR2CatalogTracks();
       track = r2Tracks.find(t => t.id === req.params.id) as unknown as Track | undefined;
+    }
+    if (!track) {
+      track = tracks.find(t => t.id === req.params.id);
     }
     if (!track) {
       return res.status(404).json({ error: 'Track not found' });

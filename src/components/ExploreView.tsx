@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { Music, Sparkles, Mic2, ArrowRight, Globe } from 'lucide-react';
-import { Track, GenreCategory, ArtistProfile } from '../types/music';
+import { Music, Sparkles, Mic2, ArrowRight, Globe, Play, Disc3 } from 'lucide-react';
+import { Track, GenreCategory, ArtistProfile, Playlist } from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
 import { normalizeSearchText } from '../utils/artistSync';
@@ -10,11 +10,13 @@ interface ExploreViewProps {
   tracks: Track[];
   genres: GenreCategory[];
   artists: ArtistProfile[];
+  publicAlbums?: Playlist[];
   searchQuery: string;
   activeGenre: string;
   setActiveGenre: (genre: string) => void;
   onSelectArtist: (artist: ArtistProfile) => void;
   onSelectArtistByName: (artistName: string) => void;
+  onSelectPlaylist?: (playlist: Playlist) => void;
   onOpenArtists: () => void;
 }
 
@@ -22,17 +24,29 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   tracks,
   genres,
   artists,
+  publicAlbums = [],
   searchQuery,
   activeGenre,
   setActiveGenre,
   onSelectArtist,
   onSelectArtistByName,
+  onSelectPlaylist,
   onOpenArtists,
 }) => {
   const filteredTracks =
     activeGenre === 'all'
       ? tracks
       : tracks.filter(t => matchesGenreFilter(t, activeGenre));
+
+  const matchingPublicAlbums = useMemo(() => {
+    const q = normalizeSearchText(searchQuery);
+    if (!q) return [];
+    return publicAlbums.filter(
+      a =>
+        normalizeSearchText(a.title).includes(q) ||
+        normalizeSearchText(a.description || '').includes(q)
+    );
+  }, [publicAlbums, searchQuery]);
 
   const matchingArtists = useMemo(() => {
     const q = normalizeSearchText(searchQuery);
@@ -87,6 +101,65 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
           <ArrowRight className="w-3.5 h-3.5 text-[#a3aed0]" />
         </button>
       </div>
+
+      {/* Matching Public App Albums when searching */}
+      {matchingPublicAlbums.length > 0 && (
+        <section>
+          <h3 className="text-lg font-bold text-[#f7f5f0] tracking-tight mb-3 flex items-center gap-2">
+            <Disc3 className="w-5 h-5 text-[#f47b64]" />
+            <span>Album phù hợp</span>
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+            {matchingPublicAlbums.map(album => (
+              <div
+                key={album.id}
+                onClick={() => onSelectPlaylist?.(album)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectPlaylist?.(album);
+                  }
+                }}
+                className="group p-3.5 rounded-xl bg-[#141d3d]/90 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col justify-between"
+              >
+                <div>
+                  <div className="relative aspect-square rounded-lg overflow-hidden mb-3 shadow-md bg-[#0d142c]">
+                    <img
+                      src={album.coverUrl || '/assets/aistudio/soundly-default-cover.svg'}
+                      alt={album.title}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      onError={e => {
+                        e.currentTarget.src = '/assets/aistudio/soundly-default-cover.svg';
+                      }}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute right-2 bottom-2 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all">
+                      <div className="w-9 h-9 rounded-full bg-[#f47b64] text-[#070b1a] flex items-center justify-center shadow-xl">
+                        <Play className="w-4 h-4 fill-[#070b1a] ml-0.5" />
+                      </div>
+                    </div>
+                  </div>
+                  <h4 className="text-xs sm:text-sm font-bold text-[#f7f5f0] truncate">
+                    {album.title}
+                  </h4>
+                  {album.description && (
+                    <p className="text-[11px] text-[#a3aed0] mt-1 line-clamp-2 leading-relaxed">
+                      {album.description}
+                    </p>
+                  )}
+                </div>
+                <p className="text-[11px] font-semibold text-[#7f8bb3] mt-2 tabular-nums">
+                  {album.trackIds.length} bài hát
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Matching Artists when searching */}
       {matchingArtists.length > 0 && (

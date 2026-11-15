@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { PlayerProvider, usePlayer, getAutoVibePlaylists } from './context/PlayerContext';
+import { PlayerProvider, usePlayer } from './context/PlayerContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -30,7 +30,13 @@ import { AddToAlbumModal } from './components/AddToAlbumModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { musicApi } from './services/api';
-import { Track, Playlist, GenreCategory, ArtistProfile } from './types/music';
+import {
+  Track,
+  Playlist,
+  GenreCategory,
+  ArtistProfile,
+  TrendingChartSnapshot,
+} from './types/music';
 import { INITIAL_PLAYLISTS, INITIAL_GENRES } from './data/mockTracks';
 import {
   buildArtistDirectory,
@@ -40,7 +46,6 @@ import {
 import { deduplicateTracksList } from './utils/trackDedupe';
 import {
   MusicSpaceId,
-  filterTracksBySpace,
   matchesGenreFilter,
 } from './utils/musicSpaces';
 import { MobileLoadingScreen } from './components/MobileLoadingScreen';
@@ -170,7 +175,23 @@ const MainContent: React.FC = () => {
 
   // Full synchronized catalog state (hydrate synchronously from cache so mobile renders immediately when cached)
   const initialCachedTracks = useMemo(() => musicApi.getInitialCachedTracks(), []);
+  const initialCachedPublicAlbums = useMemo(
+    () => musicApi.getInitialCachedPublicAlbums(),
+    []
+  );
+  const initialCachedCharts = useMemo(
+    () => musicApi.getInitialCachedTrendingCharts(),
+    []
+  );
   const [allTracks, setAllTracks] = useState<Track[]>(initialCachedTracks);
+  const [publicAlbums, setPublicAlbums] = useState<Playlist[]>(initialCachedPublicAlbums);
+  const [trendingCharts, setTrendingCharts] = useState<{
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  }>(initialCachedCharts);
+  const [isChartsLoading, setIsChartsLoading] = useState<boolean>(
+    !initialCachedCharts.vn && !initialCachedCharts.global
+  );
   const [playlists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [genres] = useState<GenreCategory[]>(INITIAL_GENRES);
   const [isCatalogSyncing, setIsCatalogSyncing] = useState<boolean>(
@@ -188,15 +209,35 @@ const MainContent: React.FC = () => {
     }, 6500);
 
     async function loadData() {
+      let resolvedTracks: Track[] = initialCachedTracks;
       try {
         const fetchedTracks = await musicApi.getTracks();
         if (isMounted && fetchedTracks && fetchedTracks.length > 0) {
+          resolvedTracks = fetchedTracks;
           setAllTracks(fetchedTracks);
           setIsCatalogSyncing(false);
         }
       } catch (err) {
         console.warn('Could not fetch from backend API, using initial catalog:', err);
         if (isMounted) setIsCatalogSyncing(false);
+      }
+
+      try {
+        const [albumsRes, chartsRes] = await Promise.allSettled([
+          musicApi.getPublicAlbums(),
+          musicApi.getTrendingCharts({
+            catalogTracks: resolvedTracks,
+            isAdmin,
+          }),
+        ]);
+        if (isMounted && albumsRes.status === 'fulfilled') {
+          setPublicAlbums(albumsRes.value);
+        }
+        if (isMounted && chartsRes.status === 'fulfilled') {
+          setTrendingCharts(chartsRes.value);
+        }
+      } finally {
+        if (isMounted) setIsChartsLoading(false);
       }
     }
 
@@ -210,20 +251,43 @@ const MainContent: React.FC = () => {
       }
     };
 
+    const handlePublicAlbumsRefreshed = (e: Event) => {
+      const detail = (e as CustomEvent<{ albums?: Playlist[] }>).detail;
+      if (isMounted && Array.isArray(detail?.albums)) {
+        setPublicAlbums(detail.albums);
+      }
+    };
+
+    const handleChartsRefreshed = (e: Event) => {
+      const detail = (
+        e as CustomEvent<{
+          charts?: { vn: TrendingChartSnapshot | null; global: TrendingChartSnapshot | null };
+        }>
+      ).detail;
+      if (isMounted && detail?.charts) {
+        setTrendingCharts(detail.charts);
+        setIsChartsLoading(false);
+      }
+    };
+
     const handleSyncFinished = () => {
       if (isMounted) setIsCatalogSyncing(false);
     };
 
     window.addEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
+    window.addEventListener('soundly:public-albums-refreshed', handlePublicAlbumsRefreshed);
+    window.addEventListener('soundly:charts-refreshed', handleChartsRefreshed);
     window.addEventListener('soundly:catalog-sync-finished', handleSyncFinished);
 
     return () => {
       isMounted = false;
       window.clearTimeout(safetyTimer);
       window.removeEventListener('soundly:catalog-refreshed', handleCatalogRefreshed);
+      window.removeEventListener('soundly:public-albums-refreshed', handlePublicAlbumsRefreshed);
+      window.removeEventListener('soundly:charts-refreshed', handleChartsRefreshed);
       window.removeEventListener('soundly:catalog-sync-finished', handleSyncFinished);
     };
-  }, [user]);
+  }, [user, isAdmin]);
 
   // Real-time play count synchronization for Top 50 & Artist play metrics
   useEffect(() => {
@@ -285,24 +349,16 @@ const MainContent: React.FC = () => {
     return findArtistByNameOrId(artists, selectedArtistId);
   }, [selectedArtistId, artists]);
 
-  // Auto-curated vibe & space playlists (used so clicking any Space/Vibe card opens PlaylistDetailView)
-  const autoPlaylists = useMemo(() => {
-    const base = getAutoVibePlaylists(allTracks, 'all');
-    if (activeSpace === 'all') return base;
-    const scoped = getAutoVibePlaylists(filterTracksBySpace(allTracks, activeSpace), activeSpace);
-    return [...scoped, ...base];
-  }, [allTracks, activeSpace]);
-
-  // Merge custom user albums with catalog & auto-vibe playlists so all cards open reliably
+  // Resolve selected personal, catalog, or public search-only app album
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) return null;
     return (
       userPlaylists.find((p) => p.id === selectedPlaylistId) ||
+      publicAlbums.find((p) => p.id === selectedPlaylistId) ||
       playlists.find((p) => p.id === selectedPlaylistId) ||
-      autoPlaylists.find((p) => p.id === selectedPlaylistId) ||
       null
     );
-  }, [selectedPlaylistId, userPlaylists, playlists, autoPlaylists]);
+  }, [selectedPlaylistId, userPlaylists, publicAlbums, playlists]);
 
   const handleSelectArtist = (artist: ArtistProfile) => {
     setSelectedArtistId(artist.id);
@@ -364,7 +420,12 @@ const MainContent: React.FC = () => {
           setActiveGenre={setActiveGenre}
           allTracks={allTracks}
           artists={artists}
+          publicAlbums={publicAlbums}
           onSelectArtist={handleSelectArtist}
+          onSelectPlaylist={(pl) => {
+            setSelectedPlaylistId(pl.id);
+            setCurrentView('playlist');
+          }}
           onNavigateToExplore={() => setCurrentView('explore')}
           onOpenSleepTimer={() => setIsSleepTimerOpen(true)}
           onOpenMobileMenu={() => setIsMobileDrawerOpen(true)}
@@ -392,10 +453,14 @@ const MainContent: React.FC = () => {
                 {currentView === 'home' ? (
                   <HomeView
                     tracks={filteredTracks}
+                    catalogTracks={allTracks}
                     playlists={playlists}
                     artists={artists}
                     activeSpace={activeSpace}
                     onChangeSpace={setActiveSpace}
+                    trendingCharts={trendingCharts}
+                    isChartsLoading={isChartsLoading}
+                    onTrendingChartsUpdated={setTrendingCharts}
                     onSelectPlaylist={(pl) => {
                       setSelectedPlaylistId(pl.id);
                       setCurrentView('playlist');
@@ -410,11 +475,16 @@ const MainContent: React.FC = () => {
                     tracks={filteredTracks}
                     genres={genres}
                     artists={artists}
+                    publicAlbums={publicAlbums}
                     searchQuery={searchQuery}
                     activeGenre={activeGenre}
                     setActiveGenre={setActiveGenre}
                     onSelectArtist={handleSelectArtist}
                     onSelectArtistByName={handleSelectArtistByName}
+                    onSelectPlaylist={(pl) => {
+                      setSelectedPlaylistId(pl.id);
+                      setCurrentView('playlist');
+                    }}
                     onOpenArtists={() => setCurrentView('artists')}
                   />
                 ) : currentView === 'artists' ? (
@@ -447,14 +517,25 @@ const MainContent: React.FC = () => {
                 ) : currentView === 'history' ? (
                   <HistoryView onSelectArtist={handleSelectArtistByName} />
                 ) : currentView === 'admin' ? (
-                  <AdminDashboardView tracks={allTracks} onTracksUpdated={setAllTracks} />
+                  <AdminDashboardView
+                    tracks={allTracks}
+                    onTracksUpdated={setAllTracks}
+                    publicAlbums={publicAlbums}
+                    onPublicAlbumsUpdated={setPublicAlbums}
+                    trendingCharts={trendingCharts}
+                    onTrendingChartsUpdated={setTrendingCharts}
+                  />
                 ) : (
                   <HomeView
                     tracks={filteredTracks}
+                    catalogTracks={allTracks}
                     playlists={playlists}
                     artists={artists}
                     activeSpace={activeSpace}
                     onChangeSpace={setActiveSpace}
+                    trendingCharts={trendingCharts}
+                    isChartsLoading={isChartsLoading}
+                    onTrendingChartsUpdated={setTrendingCharts}
                     onSelectPlaylist={(pl) => {
                       setSelectedPlaylistId(pl.id);
                       setCurrentView('playlist');

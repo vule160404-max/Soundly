@@ -5,7 +5,6 @@ import { INITIAL_PLAYLISTS } from '../data/mockTracks';
 import { useAuth } from './AuthContext';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { musicApi } from '../services/api';
-import { isUsUkTrack, isKPopTrack, MusicSpaceId } from '../utils/musicSpaces';
 
 export const DEFAULT_CUSTOM_ALBUM_COVER = '/assets/aistudio/soundly-default-cover.svg';
 
@@ -141,6 +140,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user } = useAuth();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamFallbackTriedRef = useRef<boolean>(false);
+  const playAttemptIdRef = useRef<number>(0);
   const lastRecordedPlayRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
   const handleTrackEndRef = useRef<() => void>(() => {});
   const shufflePlayedIndicesRef = useRef<Set<number>>(new Set());
@@ -387,17 +387,40 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const r2Key = extractR2TrackKeyFromUrl(currentSrc);
       if (r2Key && !streamFallbackTriedRef.current) {
         streamFallbackTriedRef.current = true;
+        const attemptId = playAttemptIdRef.current;
         const fallbackSrc = `/api/r2/stream?key=${encodeURIComponent(r2Key)}`;
         console.warn('Direct audio URL failed, retrying via R2 stream proxy:', currentSrc);
-        audio.src = fallbackSrc;
-        audio.load();
-        audio
-          .play()
-          .then(() => {
-            setIsPlaying(true);
-            setAudioError(null);
+
+        void fetch(fallbackSrc, { method: 'GET', headers: { Range: 'bytes=0-1' } })
+          .then((res) => {
+            if (attemptId !== playAttemptIdRef.current) return;
+            if (!res.ok && res.status === 404) {
+              setAudioError('Tệp âm thanh của bài này đã bị xóa hoặc không còn tồn tại trên Cloudflare R2 (404).');
+              setIsPlaying(false);
+              return;
+            }
+            const onCanPlay = () => {
+              audio.removeEventListener('canplay', onCanPlay);
+              if (attemptId !== playAttemptIdRef.current) return;
+              audio
+                .play()
+                .then(() => {
+                  setIsPlaying(true);
+                  setAudioError(null);
+                })
+                .catch((playErr: unknown) => {
+                  const errName = playErr instanceof Error ? playErr.name : '';
+                  if (errName === 'AbortError') return;
+                  setAudioError('Không thể phát tệp âm thanh từ Cloudflare R2.');
+                  setIsPlaying(false);
+                });
+            };
+            audio.addEventListener('canplay', onCanPlay, { once: true });
+            audio.src = fallbackSrc;
+            audio.load();
           })
           .catch(() => {
+            if (attemptId !== playAttemptIdRef.current) return;
             setAudioError('Không thể phát tệp âm thanh từ Cloudflare R2.');
             setIsPlaying(false);
           });
@@ -413,7 +436,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ) {
         setAudioError('Link MP3 tạm từ SpotFlow đã hết hạn (404) và chưa được lưu lên Cloudflare R2.');
       } else {
-        setAudioError('Không thể nạp tệp âm thanh. Vui lòng kiểm tra kết nối hoặc file trên R2.');
+        setAudioError('Không thể nạp tệp âm thanh từ Cloudflare R2. Tệp có thể đã bị xóa hoặc đường truyền gián đoạn.');
       }
       setIsPlaying(false);
     };
@@ -517,6 +540,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentTime(0);
     setDuration(track.duration || 0);
     streamFallbackTriedRef.current = false;
+    playAttemptIdRef.current += 1;
 
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
@@ -580,6 +604,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
       .catch((err: unknown) => {
         const errName = err instanceof Error ? err.name : '';
+        if (errName === 'AbortError') return;
         console.warn('Audio play request interrupted:', err);
         setIsPlaying(false);
         if (errName === 'NotAllowedError') {
@@ -1021,153 +1046,3 @@ export const usePlayer = (): PlayerContextType => {
   return context;
 };
 
-export function getAutoVibePlaylists(
-  tracks: Track[],
-  spaceId: MusicSpaceId = 'all'
-): Playlist[] {
-  const matchFilter = (t: Track, keywords: string[], genreName?: string) => {
-    const text = (t.title + ' ' + t.artist + ' ' + t.genre + ' ' + (t.mood || '')).toLowerCase();
-    if (genreName && t.genre.toLowerCase() === genreName.toLowerCase()) return true;
-    return keywords.some(kw => text.includes(kw.toLowerCase()));
-  };
-
-  const usUkTracks = tracks.filter(t => isUsUkTrack(t));
-  const kPopTracks = tracks.filter(t => isKPopTrack(t));
-  const chillTracks = tracks.filter(t => matchFilter(t, ['chill', 'thư giãn', 'thanh bình', 'nhẹ nhàng', 'lo-fi'], 'Lo-Fi & Chill'));
-  const sadTracks = tracks.filter(t => matchFilter(t, ['buồn', 'suy', 'tâm trạng', 'hoài niệm', 'lãng mạn', 'cô đơn', 'ballad'], 'Ballad'));
-  const happyTracks = tracks.filter(t => matchFilter(t, ['vui', 'yêu đời', 'năng động', 'sôi động', 'sung', 'pop'], 'Pop'));
-  const lofiTracks = tracks.filter(t => matchFilter(t, ['lofi', 'study', 'beats', 'chill'], 'Lo-Fi & Chill'));
-  const acousticTracks = tracks.filter(t => matchFilter(t, ['acoustic', 'unplugged', 'cover', 'mộc'], 'Acoustic'));
-  const trendingTracks = [...tracks].sort((a, b) => (Number(b.plays) || 0) - (Number(a.plays) || 0)).slice(0, 20);
-
-  if (spaceId === 'us-uk') {
-    const usUkHits = usUkTracks.filter(t => matchFilter(t, ['pop', 'hit', 'dance', 'upbeat', 'energy', 'us-uk'], 'US-UK'));
-    const usUkChill = usUkTracks.filter(t => matchFilter(t, ['chill', 'night', 'lofi', 'dream', 'slow', 'sleep'], 'Lo-Fi & Chill'));
-    const usUkRnb = usUkTracks.filter(t => matchFilter(t, ['r&b', 'soul', 'love', 'heart', 'feel'], 'R&B'));
-    const usUkIndie = usUkTracks.filter(t => matchFilter(t, ['indie', 'acoustic', 'guitar', 'folk', 'ballad'], 'Indie'));
-    const usUkTop = [...usUkTracks].sort((a, b) => (Number(b.plays) || 0) - (Number(a.plays) || 0)).slice(0, 25);
-
-    return [
-      {
-        id: 'vibe-us-uk-hits',
-        title: 'US-UK Global Hits',
-        description: 'Những bản nhạc Âu Mỹ sôi động và phổ biến nhất trong không gian quốc tế.',
-        coverUrl: usUkHits[0]?.coverUrl || usUkTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
-        trackIds: (usUkHits.length > 0 ? usUkHits : usUkTracks).map(t => t.id),
-        isCustom: false,
-        createdAt: 'Không gian US-UK',
-      },
-      {
-        id: 'vibe-us-uk-chill',
-        title: 'US-UK Late Night Chill',
-        description: 'Âm hưởng Âu Mỹ nhẹ nhàng, thư thái cho buổi tối muộn và lái xe.',
-        coverUrl: usUkChill[0]?.coverUrl || usUkTracks[1]?.coverUrl || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
-        trackIds: (usUkChill.length > 0 ? usUkChill : usUkTracks).map(t => t.id),
-        isCustom: false,
-        createdAt: 'Không gian US-UK',
-      },
-      {
-        id: 'vibe-us-uk-rnb',
-        title: 'US-UK R&B & Soul',
-        description: 'Chất giọng R&B mượt mà, giai điệu sâu lắng đậm chất Âu Mỹ.',
-        coverUrl: usUkRnb[0]?.coverUrl || usUkTracks[2]?.coverUrl || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=600&auto=format&fit=crop&q=80',
-        trackIds: (usUkRnb.length > 0 ? usUkRnb : usUkTracks).map(t => t.id),
-        isCustom: false,
-        createdAt: 'Không gian US-UK',
-      },
-      {
-        id: 'vibe-us-uk-indie',
-        title: 'US-UK Indie & Acoustic',
-        description: 'Giai điệu Indie phương Tây và bản phối Acoustic tinh tế.',
-        coverUrl: usUkIndie[0]?.coverUrl || usUkTracks[3]?.coverUrl || 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=600&auto=format&fit=crop&q=80',
-        trackIds: (usUkIndie.length > 0 ? usUkIndie : usUkTracks).map(t => t.id),
-        isCustom: false,
-        createdAt: 'Không gian US-UK',
-      },
-      {
-        id: 'vibe-us-uk-trending',
-        title: 'Top US-UK Thịnh Hành',
-        description: 'Các ca khúc nhạc nước ngoài được nghe nhiều nhất trên Soundly.',
-        coverUrl: usUkTop[0]?.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-        trackIds: usUkTop.map(t => t.id),
-        isCustom: false,
-        createdAt: 'Không gian US-UK',
-      },
-    ];
-  }
-
-  return [
-    {
-      id: 'vibe-us-uk',
-      title: 'US-UK & Nhạc Quốc Tế',
-      description: 'Không gian âm nhạc Âu Mỹ, Pop, R&B và những giai điệu nước ngoài chọn lọc.',
-      coverUrl: usUkTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
-      trackIds: usUkTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-chill',
-      title: 'Chill & Thư giãn',
-      description: 'Những giai điệu nhẹ nhàng giúp bạn thả lỏng tâm hồn và tận hưởng không gian yên bình.',
-      coverUrl: chillTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
-      trackIds: chillTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-sad',
-      title: 'Nhạc Suy & Tâm Trạng',
-      description: 'Giai điệu sâu lắng, đượm buồn dành cho những khoảnh khắc nội tâm và hoài niệm.',
-      coverUrl: sadTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-      trackIds: sadTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-happy',
-      title: 'Vui Vẻ & Yêu Đời',
-      description: 'Bừng sáng năng lượng tích cực, giai điệu tươi vui cho một ngày mới tràn đầy sức sống.',
-      coverUrl: happyTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=600&auto=format&fit=crop&q=80',
-      trackIds: happyTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-lofi',
-      title: 'Lo-Fi & Study Beats',
-      description: 'Âm thanh beat lo-fi êm dịu hỗ trợ tập trung học tập, làm việc và sáng tạo.',
-      coverUrl: lofiTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-      trackIds: lofiTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-acoustic',
-      title: 'Acoustic Mộc Mạc',
-      description: 'Tiếng đàn guitar mộc mạc cùng giọng ca tự sự chân thực chạm đến cảm xúc.',
-      coverUrl: acousticTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=600&auto=format&fit=crop&q=80',
-      trackIds: acousticTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-kpop',
-      title: 'K-Pop & Asian Vibe',
-      description: 'Những giai điệu K-Pop, K-Indie và Châu Á bắt tai, hiện đại.',
-      coverUrl: kPopTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=600&auto=format&fit=crop&q=80',
-      trackIds: kPopTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-    {
-      id: 'vibe-trending',
-      title: 'Top Thịnh Hành (Trending)',
-      description: 'Những bản nhạc được nghe nhiều nhất trên hệ thống Soundly hiện tại.',
-      coverUrl: trendingTracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-      trackIds: trendingTracks.map(t => t.id),
-      isCustom: false,
-      createdAt: 'Tự động tạo bởi AI',
-    },
-  ];
-}

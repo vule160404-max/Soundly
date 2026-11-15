@@ -22,12 +22,16 @@ import {
   ExternalLink,
   Pencil,
   Search,
+  Disc3,
+  TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
 import { musicApi } from '../services/api';
-import { Track } from '../types/music';
+import { Playlist, Track, TrendingChartSnapshot } from '../types/music';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
+import { AdminPublicAlbumsTab } from './AdminPublicAlbumsTab';
+import { AdminTrendingChartsTab } from './AdminTrendingChartsTab';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import {
@@ -42,6 +46,16 @@ import {
 interface AdminDashboardViewProps {
   tracks: Track[];
   onTracksUpdated: (tracks: Track[]) => void;
+  publicAlbums: Playlist[];
+  onPublicAlbumsUpdated: (albums: Playlist[]) => void;
+  trendingCharts: {
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  };
+  onTrendingChartsUpdated: (charts: {
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  }) => void;
 }
 
 interface UserProfileDoc {
@@ -92,11 +106,15 @@ function getAudioDuration(objectUrl: string): Promise<number> {
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   tracks,
   onTracksUpdated,
+  publicAlbums,
+  onPublicAlbumsUpdated,
+  trendingCharts,
+  onTrendingChartsUpdated,
 }) => {
   const { user, isAdmin } = useAuth();
   const { playTrack, currentTrack, isPlaying, togglePlay, openConfirmDialog } = usePlayer();
 
-  const [activeTab, setActiveTab] = useState<'upload' | 'users' | 'tracks' | 'spotflow' | 'r2'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'albums' | 'charts' | 'users' | 'tracks' | 'spotflow' | 'r2'>('upload');
   const [usersList, setUsersList] = useState<UserProfileDoc[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
 
@@ -1022,6 +1040,30 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveTab('albums')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all ${
+            activeTab === 'albums'
+              ? 'bg-[#f47b64] text-[#070b1a] shadow-md'
+              : 'bg-[#141d3d] text-[#a3aed0] hover:text-[#f7f5f0]'
+          }`}
+        >
+          <Disc3 className="w-4 h-4" />
+          <span>Quản lý Album App ({publicAlbums.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('charts')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all ${
+            activeTab === 'charts'
+              ? 'bg-[#f47b64] text-[#070b1a] shadow-md'
+              : 'bg-[#141d3d] text-[#a3aed0] hover:text-[#f7f5f0]'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span>BXH Thịnh Hành Spotify</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('spotflow')}
           className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all ${
             activeTab === 'spotflow'
@@ -1060,6 +1102,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <p className="text-[11px] text-amber-200/90 mt-0.5">{aiError}</p>
           </div>
         </div>
+      )}
+
+      {/* TAB PUBLIC APP ALBUMS */}
+      {activeTab === 'albums' && (
+        <AdminPublicAlbumsTab
+          tracks={tracks}
+          publicAlbums={publicAlbums}
+          onPublicAlbumsUpdated={onPublicAlbumsUpdated}
+          onNotify={(msg) => {
+            setUploadSuccessToast(msg);
+            setTimeout(() => setUploadSuccessToast(null), 4000);
+          }}
+        />
       )}
 
       {/* TAB CLOUDFLARE R2 STORAGE */}
@@ -1723,6 +1778,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       )}
 
       {/* TAB 2: REGISTERED USERS MANAGEMENT */}
+      {activeTab === 'charts' && (
+        <AdminTrendingChartsTab
+          tracks={tracks}
+          charts={trendingCharts}
+          onChartsUpdated={onTrendingChartsUpdated}
+        />
+      )}
+
       {activeTab === 'users' && (
         <div className="p-6 rounded-2xl bg-[#141d3d] border border-[#222f5e]">
           <div className="flex items-center justify-between mb-4">

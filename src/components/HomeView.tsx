@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Play,
   Pause,
@@ -15,11 +15,21 @@ import {
   Globe,
   Headphones,
   Radio,
+  RefreshCw,
 } from 'lucide-react';
-import { Track, Playlist, ArtistProfile } from '../types/music';
+import {
+  Track,
+  Playlist,
+  ArtistProfile,
+  TrendingChartEntry,
+  TrendingChartRegion,
+  TrendingChartSnapshot,
+} from '../types/music';
 import { TrackTable } from './TrackTable';
 import { ArtistAvatar } from './ArtistAvatar';
-import { usePlayer, getAutoVibePlaylists } from '../context/PlayerContext';
+import { usePlayer } from '../context/PlayerContext';
+import { useAuth } from '../context/AuthContext';
+import { musicApi } from '../services/api';
 import { buildArtistDirectory } from '../utils/artistSync';
 import {
   MUSIC_SPACES,
@@ -29,10 +39,20 @@ import {
 
 interface HomeViewProps {
   tracks: Track[];
+  catalogTracks?: Track[];
   playlists: Playlist[];
   artists: ArtistProfile[];
   activeSpace: MusicSpaceId;
   onChangeSpace: (space: MusicSpaceId) => void;
+  trendingCharts?: {
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  };
+  isChartsLoading?: boolean;
+  onTrendingChartsUpdated?: (charts: {
+    vn: TrendingChartSnapshot | null;
+    global: TrendingChartSnapshot | null;
+  }) => void;
   onSelectPlaylist: (playlist: Playlist) => void;
   onSelectArtist: (artist: ArtistProfile) => void;
   onSelectArtistByName: (artistName: string) => void;
@@ -42,16 +62,21 @@ interface HomeViewProps {
 
 export const HomeView: React.FC<HomeViewProps> = ({
   tracks,
+  catalogTracks,
   playlists,
   artists,
   activeSpace,
   onChangeSpace,
+  trendingCharts,
+  isChartsLoading = false,
+  onTrendingChartsUpdated,
   onSelectPlaylist,
   onSelectArtist,
   onSelectArtistByName,
   onOpenArtists,
   onExploreGenres,
 }) => {
+  const { isAdmin } = useAuth();
   const {
     playTrack,
     currentTrack,
@@ -62,6 +87,25 @@ export const HomeView: React.FC<HomeViewProps> = ({
     openCreateAlbumModal,
     playRandomShuffle,
   } = usePlayer();
+
+  const [chartSourceTab, setChartSourceTab] = useState<'spotify' | 'soundly'>('spotify');
+  const [chartRegion, setChartRegion] = useState<TrendingChartRegion>(
+    activeSpace === 'us-uk' ? 'global' : 'vn'
+  );
+  const [isSyncingChart, setIsSyncingChart] = useState<boolean>(false);
+  const [chartSyncError, setChartSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeSpace === 'us-uk') {
+      setChartRegion('global');
+      setChartSourceTab('spotify');
+    } else if (activeSpace === 'vn' || activeSpace === 'all') {
+      setChartRegion('vn');
+      setChartSourceTab('spotify');
+    } else {
+      setChartSourceTab('soundly');
+    }
+  }, [activeSpace]);
 
   const spaceCounts = useMemo(() => {
     const map: Record<MusicSpaceId, number> = {
@@ -82,11 +126,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const spaceArtists = useMemo(
     () => (activeSpace === 'all' ? artists : buildArtistDirectory(spaceTracks)),
     [activeSpace, artists, spaceTracks]
-  );
-
-  const vibePlaylists = useMemo(
-    () => getAutoVibePlaylists(spaceTracks, activeSpace),
-    [spaceTracks, activeSpace]
   );
 
   const currentSpaceMeta = useMemo(
@@ -124,7 +163,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return [...reliable, ...others].slice(0, 6);
   }, [spaceTracks]);
 
-  const top50Tracks = useMemo(
+  const localTop50Tracks = useMemo(
     () =>
       [...spaceTracks]
         .sort(
@@ -135,6 +174,86 @@ export const HomeView: React.FC<HomeViewProps> = ({
         .slice(0, 50),
     [spaceTracks]
   );
+
+  const activeSpotifySnapshot =
+    chartRegion === 'global'
+      ? trendingCharts?.global || null
+      : trendingCharts?.vn || null;
+
+  const { spotifyChartTracks, rankMetaByTrackId } = useMemo(() => {
+    if (!activeSpotifySnapshot || activeSpotifySnapshot.entries.length === 0) {
+      return {
+        spotifyChartTracks: [] as Track[],
+        rankMetaByTrackId: undefined as Record<string, TrendingChartEntry> | undefined,
+      };
+    }
+
+    const sourcePool =
+      catalogTracks && catalogTracks.length > 0 ? catalogTracks : tracks;
+    const byId = new Map(sourcePool.map((t) => [t.id, t]));
+    const resolved: Track[] = [];
+    const metaMap: Record<string, TrendingChartEntry> = {};
+    const seen = new Set<string>();
+
+    for (const entry of activeSpotifySnapshot.entries) {
+      if (seen.has(entry.trackId)) continue;
+      const track = byId.get(entry.trackId);
+      if (!track || !track.audioUrl || track.audioUrl.startsWith('blob:')) continue;
+      seen.add(track.id);
+      resolved.push(track);
+      metaMap[track.id] = entry;
+      if (resolved.length >= 50) break;
+    }
+
+    return {
+      spotifyChartTracks: resolved,
+      rankMetaByTrackId: resolved.length > 0 ? metaMap : undefined,
+    };
+  }, [activeSpotifySnapshot, catalogTracks, tracks]);
+
+  const showingSpotifyChart =
+    chartSourceTab === 'spotify' && spotifyChartTracks.length > 0;
+  const displayedChartTracks = showingSpotifyChart
+    ? spotifyChartTracks
+    : localTop50Tracks;
+
+  const formatChartUpdatedTime = (iso?: string) => {
+    if (!iso) return 'Đang cập nhật từ Spotify';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'Cập nhật từ Spotify';
+    const now = new Date();
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+    const timeStr = d.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return isToday
+      ? `Cập nhật từ Spotify · Hôm nay ${timeStr}`
+      : `Cập nhật từ Spotify · ${d.toLocaleDateString('vi-VN')}`;
+  };
+
+  const handleAdminSyncChart = async () => {
+    if (!isAdmin || isSyncingChart) return;
+    setIsSyncingChart(true);
+    setChartSyncError(null);
+    try {
+      const updated = await musicApi.syncTrendingCharts({
+        region: chartRegion,
+        catalogTracks:
+          catalogTracks && catalogTracks.length > 0 ? catalogTracks : tracks,
+      });
+      onTrendingChartsUpdated?.(updated);
+    } catch (err: unknown) {
+      setChartSyncError(
+        err instanceof Error ? err.message : 'Đồng bộ BXH Spotify thất bại.'
+      );
+    } finally {
+      setIsSyncingChart(false);
+    }
+  };
 
   const handleQuickPlay = (track: Track, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -324,6 +443,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           loading="lazy"
                           decoding="async"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.src = '/assets/aistudio/soundly-default-cover.svg';
+                          }}
                           className="w-14 h-14 object-cover shrink-0 shadow-md"
                         />
                         <div className="min-w-0">
@@ -496,71 +618,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </section>
           )}
 
-          {/* Auto-Generated Mood & Vibe Albums Section */}
-          <section>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-              <div>
-                <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[#f47b64]" />
-                  <span>Album tâm trạng & Vibe (Tự động phân loại)</span>
-                </h3>
-                <p className="text-xs text-[#a3aed0] mt-0.5">
-                  Nhạc chill, nhạc suy, vui vẻ yêu đời, lofi hay acoustic được tổng hợp tự động theo gu âm nhạc của bạn.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => playRandomShuffle(spaceTracks)}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-[#f47b64] hover:bg-[#ff8d76] text-[#070b1a] font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all shrink-0 self-start sm:self-auto"
-              >
-                <Play className="w-3.5 h-3.5 fill-[#070b1a]" />
-                <span>
-                  {activeSpace === 'all'
-                    ? 'Phát ngẫu nhiên tất cả (Shuffle)'
-                    : `Phát ngẫu nhiên ${currentSpaceMeta.shortTitle}`}
-                </span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-              {vibePlaylists.map((vibe) => (
-                <div
-                  key={vibe.id}
-                  onClick={() => onSelectPlaylist(vibe)}
-                  role="button"
-                  tabIndex={0}
-                  className="group p-3.5 rounded-2xl bg-[#141d3d]/85 hover:bg-[#1c2852] border border-[#1e2a54] md:hover:-translate-y-0.5 transition-colors duration-150 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="relative aspect-square w-full rounded-xl overflow-hidden mb-3 shadow-md bg-[#0d142c]">
-                    <img
-                      src={vibe.coverUrl}
-                      alt={vibe.title}
-                      loading="lazy"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-300"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2.5">
-                      <span className="text-[11px] font-bold text-white bg-[#f47b64] px-2 py-0.5 rounded-full">
-                        {vibe.trackIds.length} bài
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-xs sm:text-sm font-bold text-[#f7f5f0] truncate">
-                      {vibe.title}
-                    </h4>
-                    <p className="text-[11px] text-[#a3aed0] line-clamp-1 mt-0.5">
-                      {vibe.description}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
           {/* Personal Albums Section */}
           <section>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -649,34 +706,122 @@ export const HomeView: React.FC<HomeViewProps> = ({
             )}
           </section>
 
-          {/* Top 50 Most Played Tracks on Soundly */}
+          {/* Trending Chart (Spotify Top 50 VN & Global + Soundly Most Played) */}
           <section>
-            <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 mb-3">
               <div>
                 <h3 className="text-xl font-bold text-[#f7f5f0] tracking-tight flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-[#f47b64]" />
                   <span>
-                    {activeSpace === 'us-uk'
-                      ? 'Top 50 US-UK nghe nhiều nhất'
-                      : activeSpace === 'vn'
-                        ? 'Top 50 Nhạc Việt nghe nhiều nhất'
-                        : 'Top 50 nghe nhiều nhất'}
+                    {chartSourceTab === 'spotify'
+                      ? chartRegion === 'global'
+                        ? 'Bảng Xếp Hạng Thịnh Hành Toàn Cầu'
+                        : 'Bảng Xếp Hạng Thịnh Hành Việt Nam'
+                      : activeSpace === 'us-uk'
+                        ? 'Top 50 US-UK nghe nhiều nhất'
+                        : activeSpace === 'vn'
+                          ? 'Top 50 Nhạc Việt nghe nhiều nhất'
+                          : 'Top 50 nghe nhiều nhất trên Soundly'}
                   </span>
                 </h3>
                 <p className="text-xs text-[#a3aed0] mt-0.5">
-                  {activeSpace === 'all'
-                    ? 'Bảng xếp hạng những bản nhạc được nghe nhiều nhất trên Soundly'
-                    : `Những bản nhạc nổi bật nhất trong ${currentSpaceMeta.title}`}
+                  {chartSourceTab === 'spotify' ? (
+                    showingSpotifyChart ? (
+                      <span>
+                        {formatChartUpdatedTime(activeSpotifySnapshot?.updatedAt)} ·{' '}
+                        <span className="font-mono tabular-nums text-[#cbd5f5]">
+                          {spotifyChartTracks.length}
+                        </span>{' '}
+                        bài khớp sẵn file Soundly
+                      </span>
+                    ) : isChartsLoading ? (
+                      'Đang tải bảng xếp hạng Spotify và đối chiếu kho nhạc...'
+                    ) : (
+                      'Đang hiển thị danh sách nghe nhiều trên Soundly trong khi cập nhật BXH Spotify'
+                    )
+                  ) : activeSpace === 'all' ? (
+                    'Bảng xếp hạng những bản nhạc được nghe nhiều nhất trên Soundly'
+                  ) : (
+                    `Những bản nhạc nổi bật nhất trong ${currentSpaceMeta.title}`
+                  )}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-[#a3aed0] font-mono tabular-nums">
-                  Top {top50Tracks.length} bản nhạc
-                </span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Mode switcher: Spotify Trending vs Soundly Most Played */}
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-[#141d3d] border border-[#1e2a54]">
+                  <button
+                    type="button"
+                    onClick={() => setChartSourceTab('spotify')}
+                    className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-bold transition-colors whitespace-nowrap shrink-0 ${
+                      chartSourceTab === 'spotify'
+                        ? 'bg-[#f47b64] text-[#070b1a]'
+                        : 'text-[#a3aed0] hover:text-[#f7f5f0]'
+                    }`}
+                  >
+                    Thịnh hành Spotify
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartSourceTab('soundly')}
+                    className={`min-h-[34px] px-3 py-1 rounded-md text-xs font-bold transition-colors whitespace-nowrap shrink-0 ${
+                      chartSourceTab === 'soundly'
+                        ? 'bg-[#f47b64] text-[#070b1a]'
+                        : 'text-[#a3aed0] hover:text-[#f7f5f0]'
+                    }`}
+                  >
+                    Nghe nhiều Soundly
+                  </button>
+                </div>
+
+                {/* Region switcher when in Spotify Trending mode */}
+                {chartSourceTab === 'spotify' && (
+                  <div className="flex items-center gap-1 p-1 rounded-lg bg-[#141d3d] border border-[#1e2a54]">
+                    <button
+                      type="button"
+                      onClick={() => setChartRegion('vn')}
+                      className={`min-h-[34px] px-2.5 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                        chartRegion === 'vn'
+                          ? 'bg-[#1c2852] text-[#f7f5f0]'
+                          : 'text-[#a3aed0] hover:text-[#f7f5f0]'
+                      }`}
+                    >
+                      Việt Nam
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChartRegion('global')}
+                      className={`min-h-[34px] px-2.5 py-1 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                        chartRegion === 'global'
+                          ? 'bg-[#1c2852] text-[#f7f5f0]'
+                          : 'text-[#a3aed0] hover:text-[#f7f5f0]'
+                      }`}
+                    >
+                      Toàn cầu
+                    </button>
+                  </div>
+                )}
+
+                {/* Manual Sync Button — STRICTLY VISIBLE TO ADMIN ONLY */}
+                {isAdmin && chartSourceTab === 'spotify' && (
+                  <button
+                    type="button"
+                    disabled={isSyncingChart}
+                    onClick={handleAdminSyncChart}
+                    title="Chỉ hiển thị với Admin — Đồng bộ lại BXH từ Spotify"
+                    className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#141d3d] hover:bg-[#1c2852] border border-[#f47b64]/45 text-xs font-bold text-[#f47b64] flex items-center gap-1.5 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${isSyncingChart ? 'animate-spin' : ''}`}
+                    />
+                    <span>{isSyncingChart ? 'Đang đồng bộ...' : 'Đồng bộ Spotify'}</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={onExploreGenres}
-                  className="text-xs font-bold text-[#f47b64] hover:text-[#ff8d76] flex items-center gap-1 active:scale-95 transition-all"
+                  className="text-xs font-bold text-[#f47b64] hover:text-[#ff8d76] flex items-center gap-1 active:scale-95 transition-all whitespace-nowrap shrink-0 ml-1"
                 >
                   <span>Xem kho nhạc</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -684,12 +829,30 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
             </div>
 
+            {isAdmin && chartSyncError && (
+              <p className="text-xs text-rose-400 mb-2">{chartSyncError}</p>
+            )}
+
             <div className="bg-[#0d142c] rounded-xl p-2 border border-[#1e2a54]/60">
-              <TrackTable
-                tracks={top50Tracks}
-                showRankAndPlays
-                onSelectArtist={onSelectArtistByName}
-              />
+              {chartSourceTab === 'spotify' &&
+              isChartsLoading &&
+              spotifyChartTracks.length === 0 ? (
+                <div className="space-y-2 p-2">
+                  {[0, 1, 2, 3, 4].map((skeletonIdx) => (
+                    <div
+                      key={skeletonIdx}
+                      className="h-14 rounded-lg bg-[#141d3d]/70 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <TrackTable
+                  tracks={displayedChartTracks}
+                  showRankAndPlays
+                  rankMetaByTrackId={showingSpotifyChart ? rankMetaByTrackId : undefined}
+                  onSelectArtist={onSelectArtistByName}
+                />
+              )}
             </div>
           </section>
         </>

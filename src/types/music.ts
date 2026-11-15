@@ -37,7 +37,11 @@ export interface Playlist {
   coverUrl: string;
   trackIds: string[];
   isCustom?: boolean;
+  isPublic?: boolean;
   createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  spotifyUrl?: string;
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -65,3 +69,43 @@ export interface ArtistProfile {
   collaborators: string[];
   accentGradient: string;
 }
+
+export type TrendingChartRegion = 'vn' | 'global';
+
+export interface TrendingChartEntry {
+  trackId: string;
+  spotifyRank: number;
+  previousRank?: number | null;
+  rankDelta: number;
+  isNew?: boolean;
+  peakRank?: number | null;
+  spotifyTrackId?: string;
+  spotifyTitle?: string;
+  spotifyArtist?: string;
+}
+
+export interface TrendingChartMissingEntry {
+  spotifyRank: number;
+  title: string;
+  artist: string;
+  spotifyTrackId?: string;
+  spotifyUrl?: string;
+  rankDelta?: number;
+  isNew?: boolean;
+}
+
+export interface TrendingChartSnapshot {
+  id: string;
+  region: TrendingChartRegion;
+  title: string;
+  sourceLabel: string;
+  sourceUrl: string;
+  customSpotifyUrl?: string;
+  updatedAt: string;
+  nextAutoSyncAt: string;
+  totalSpotifyEntries: number;
+  matchedCount: number;
+  entries: TrendingChartEntry[];
+  missingEntries: TrendingChartMissingEntry[];
+}
+

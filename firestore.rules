@@ -60,11 +60,65 @@ service cloud.firestore {
         (!('lyricsMode' in data) || (data.lyricsMode is string && data.lyricsMode.size() <= 20 && (data.lyricsMode == 'synced' || data.lyricsMode == 'plain' || data.lyricsMode == 'none')));
     }
 
+    function isValidAlbum(data) {
+      return data.keys().hasAll(['id', 'title', 'trackIds']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'description', 'coverUrl', 'trackIds',
+          'isPublic', 'createdAt', 'updatedAt', 'createdBy', 'spotifyUrl'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+        data.trackIds is list && data.trackIds.size() <= 1000 &&
+        (data.trackIds.size() == 0 || data.trackIds[0] is string) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+        (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 2000)) &&
+        (!('isPublic' in data) || (data.isPublic is bool)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('createdBy' in data) || (data.createdBy is string && data.createdBy.size() <= 128)) &&
+        (!('spotifyUrl' in data) || (data.spotifyUrl is string && data.spotifyUrl.size() <= 500));
+    }
+
+    function isValidChart(data) {
+      return data.keys().hasAll(['id', 'region', 'title', 'updatedAt', 'entries']) &&
+        data.keys().hasOnly([
+          'id', 'region', 'title', 'sourceLabel', 'sourceUrl',
+          'customSpotifyUrl', 'updatedAt', 'nextAutoSyncAt',
+          'totalSpotifyEntries', 'matchedCount', 'entries', 'missingEntries'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.region is string && (data.region == 'vn' || data.region == 'global') &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+        data.entries is list && data.entries.size() <= 100 &&
+        (!('sourceLabel' in data) || (data.sourceLabel is string && data.sourceLabel.size() <= 200)) &&
+        (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
+        (!('customSpotifyUrl' in data) || (data.customSpotifyUrl is string && data.customSpotifyUrl.size() <= 500)) &&
+        (!('nextAutoSyncAt' in data) || (data.nextAutoSyncAt is string && data.nextAutoSyncAt.size() <= 64)) &&
+        (!('totalSpotifyEntries' in data) || (data.totalSpotifyEntries is number && data.totalSpotifyEntries >= 0)) &&
+        (!('matchedCount' in data) || (data.matchedCount is number && data.matchedCount >= 0)) &&
+        (!('missingEntries' in data) || (data.missingEntries is list && data.missingEntries.size() <= 100));
+    }
+
     // Shared Music Catalog (readable by signed-in listeners, writable by verified admins)
     match /soundly_tracks/{trackId} {
       allow get, list: if isSignedIn();
       allow create, update: if isAdmin() && isValidId(trackId) && isValidTrack(request.resource.data);
       allow delete: if isAdmin() && isValidId(trackId);
+    }
+
+    // Shared Public App Albums (readable by signed-in listeners, writable exclusively by admins)
+    match /soundly_albums/{albumId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(albumId) && isValidAlbum(request.resource.data);
+      allow delete: if isAdmin() && isValidId(albumId);
+    }
+
+    // Spotify Trending Chart Snapshots (readable by signed-in listeners, writable exclusively by admins)
+    match /soundly_charts/{chartId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(chartId) && isValidChart(request.resource.data);
+      allow delete: if isAdmin() && isValidId(chartId);
     }
 
     // User Profile & Administration

@@ -52,9 +52,23 @@ export interface R2StoredTrack {
   lyricsMode?: 'synced' | 'plain' | 'none';
 }
 
+export interface R2StoredAlbum {
+  id: string;
+  title: string;
+  description: string;
+  coverUrl: string;
+  trackIds: string[];
+  isPublic?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  spotifyUrl?: string;
+}
+
 const CATALOG_OBJECT_KEY = 'catalog/tracks.json';
+const CATALOG_ALBUMS_KEY = 'catalog/albums.json';
 export const DEFAULT_COVER_URL =
-  'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
+  '/assets/aistudio/soundly-default-cover.svg';
 const AUDIO_EXT_REGEX = /\.(mp3|wav|flac|m4a|ogg|aac|opus)$/i;
 
 function cleanEnvValue(value?: string): string {
@@ -1363,9 +1377,11 @@ async function listAllR2Covers(
 ): Promise<{
   coverByStem: Map<string, string>;
   coverByDStrippedStem: Map<string, string>;
+  coverKeySet: Set<string>;
 }> {
   const coverByStem = new Map<string, string>();
   const coverByDStrippedStem = new Map<string, string>();
+  const coverKeySet = new Set<string>();
   let coverToken: string | undefined;
   do {
     const coverRes = await client.send(
@@ -1377,6 +1393,7 @@ async function listAllR2Covers(
     );
     for (const obj of coverRes.Contents || []) {
       if (obj.Key && IMAGE_EXT_REGEX.test(obj.Key)) {
+        coverKeySet.add(obj.Key);
         const coverUrl = buildR2PublicUrl(cfg, obj.Key);
         const rawStem = extractFileStemFromKey(obj.Key);
         const stemNorm = normalizeStemKey(rawStem, false);
@@ -1405,7 +1422,7 @@ async function listAllR2Covers(
       : undefined;
   } while (coverToken);
 
-  return { coverByStem, coverByDStrippedStem };
+  return { coverByStem, coverByDStrippedStem, coverKeySet };
 }
 
 async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
@@ -1416,12 +1433,15 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
     const client = getR2Client(cfg);
 
     // Parallelize manifest read + tracks/ listing + covers/ listing
-    const [manifestTracks, listedTrackObjects, { coverByStem, coverByDStrippedStem }] =
-      await Promise.all([
-        readR2CatalogManifest(client, cfg.bucketName),
-        listAllR2TrackObjects(client, cfg.bucketName),
-        listAllR2Covers(client, cfg),
-      ]);
+    const [
+      manifestTracks,
+      listedTrackObjects,
+      { coverByStem, coverByDStrippedStem, coverKeySet },
+    ] = await Promise.all([
+      readR2CatalogManifest(client, cfg.bucketName),
+      listAllR2TrackObjects(client, cfg.bucketName),
+      listAllR2Covers(client, cfg),
+    ]);
 
     const artistDict = buildArtistSlugDictionaryFromTracks(manifestTracks);
 
@@ -1444,8 +1464,10 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
       return undefined;
     };
 
+    const existingAudioKeySet = new Set<string>();
     const sizeByTrackKey = new Map<string, number>();
     for (const item of listedTrackObjects) {
+      existingAudioKeySet.add(item.key);
       if (typeof item.size === 'number' && item.size > 0) {
         sizeByTrackKey.set(item.key, item.size);
       }
@@ -1694,16 +1716,47 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
     }
 
     let manifestUpdated = false;
-    const healedManifest = manifestTracks.map(t => {
+    const healedManifest: R2StoredTrack[] = [];
+    for (const t of manifestTracks) {
       const next = { ...t };
       const audioKey = next.r2AudioKey || extractR2Key(next.audioUrl);
+
+      // Reconcile against actual R2 bucket objects: prune dead/404 audio tracks
+      if (
+        existingAudioKeySet.size > 0 &&
+        audioKey &&
+        audioKey.startsWith('tracks/') &&
+        !existingAudioKeySet.has(audioKey)
+      ) {
+        manifestUpdated = true;
+        console.warn(`[Cloudflare R2] Pruning missing/404 audio track from catalog: ${next.id} (${audioKey})`);
+        continue;
+      }
+
       if (next.audioUrl && next.audioUrl.includes('.r2.cloudflarestorage.com/')) {
         if (audioKey) next.audioUrl = buildR2PublicUrl(cfg, audioKey);
       }
-      if (next.coverUrl && next.coverUrl.includes('.r2.cloudflarestorage.com/')) {
-        const k = next.r2CoverKey || extractR2Key(next.coverUrl);
-        if (k) next.coverUrl = buildR2PublicUrl(cfg, k);
+
+      // Verify cover key still exists in R2; replace dead 404 covers with matched cover or default
+      const existingCoverKey = next.r2CoverKey || extractR2Key(next.coverUrl);
+      if (
+        coverKeySet.size > 0 &&
+        existingCoverKey &&
+        existingCoverKey.startsWith('covers/') &&
+        !coverKeySet.has(existingCoverKey)
+      ) {
+        const replacementCover = findMatchingCoverInR2(
+          audioKey || next.id,
+          next.title,
+          next.artist
+        );
+        next.coverUrl = replacementCover || DEFAULT_COVER_URL;
+        delete next.r2CoverKey;
+        manifestUpdated = true;
+      } else if (next.coverUrl && next.coverUrl.includes('.r2.cloudflarestorage.com/')) {
+        if (existingCoverKey) next.coverUrl = buildR2PublicUrl(cfg, existingCoverKey);
       }
+
       if (isLikelyRawSlugText(next.title) || isLikelyRawSlugText(next.artist)) {
         const histMatch = lookupHistoryByKeyOrText(audioKey || next.id, next.title, next.artist);
         if (histMatch && !isLikelyRawSlugText(histMatch.title)) {
@@ -1761,8 +1814,8 @@ async function fetchR2CatalogTracksFresh(): Promise<R2StoredTrack[]> {
           manifestUpdated = true;
         }
       }
-      return next;
-    });
+      healedManifest.push(next);
+    }
 
     // Single O(N) pass deduplication
     const finalDeduped = deduplicateR2TrackList([...healedManifest, ...recoveredTracks]);
@@ -2094,3 +2147,207 @@ export async function deleteR2CatalogTrack(id: string): Promise<boolean> {
   }
   return true;
 }
+
+let cachedR2Albums: R2StoredAlbum[] | null = null;
+let cachedR2AlbumsAt = 0;
+
+function sanitizeR2AlbumRecord(raw: Partial<R2StoredAlbum>): R2StoredAlbum {
+  const safeId = String(raw.id || `public-album-${Date.now()}`)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 128);
+  const trackIds = Array.isArray(raw.trackIds)
+    ? Array.from(
+        new Set(
+          raw.trackIds
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map(x => x.trim())
+        )
+      ).slice(0, 1000)
+    : [];
+  const nowIso = new Date().toISOString();
+  return {
+    id: safeId,
+    title: String(raw.title || 'Album Soundly').trim().slice(0, 200) || 'Album Soundly',
+    description: String(raw.description || '').trim().slice(0, 500),
+    coverUrl:
+      String(raw.coverUrl || '').trim().slice(0, 2000) ||
+      '/assets/aistudio/soundly-default-cover.svg',
+    trackIds,
+    isPublic: true,
+    createdAt: String(raw.createdAt || nowIso).slice(0, 64),
+    updatedAt: String(raw.updatedAt || nowIso).slice(0, 64),
+    ...(raw.createdBy ? { createdBy: String(raw.createdBy).slice(0, 128) } : {}),
+    ...(raw.spotifyUrl ? { spotifyUrl: String(raw.spotifyUrl).slice(0, 500) } : {}),
+  };
+}
+
+async function readR2PublicAlbumsManifest(
+  client: S3Client,
+  bucketName: string
+): Promise<R2StoredAlbum[]> {
+  try {
+    const res = await client.send(
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: CATALOG_ALBUMS_KEY,
+      })
+    );
+    const bodyText = await res.Body?.transformToString('utf-8');
+    if (!bodyText) return [];
+    const parsed = JSON.parse(bodyText);
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((a): a is Partial<R2StoredAlbum> => Boolean(a && typeof a === 'object' && a.id))
+          .map(sanitizeR2AlbumRecord)
+      : [];
+  } catch (err: unknown) {
+    const name = (err as { name?: string })?.name || '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return [];
+    return [];
+  }
+}
+
+async function saveR2PublicAlbumsManifest(
+  client: S3Client,
+  bucketName: string,
+  albums: R2StoredAlbum[]
+): Promise<void> {
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucketName,
+      Key: CATALOG_ALBUMS_KEY,
+      Body: JSON.stringify(albums),
+      ContentType: 'application/json; charset=utf-8',
+    })
+  );
+  cachedR2Albums = albums;
+  cachedR2AlbumsAt = Date.now();
+}
+
+export async function getR2PublicAlbums(
+  forceRefresh: boolean = false
+): Promise<R2StoredAlbum[]> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return [];
+
+  if (
+    !forceRefresh &&
+    cachedR2Albums &&
+    Date.now() - cachedR2AlbumsAt < 30_000
+  ) {
+    return cachedR2Albums;
+  }
+
+  try {
+    const client = getR2Client(cfg);
+    const list = await readR2PublicAlbumsManifest(client, cfg.bucketName);
+    cachedR2Albums = list;
+    cachedR2AlbumsAt = Date.now();
+    return list;
+  } catch (err) {
+    console.warn('[Cloudflare R2] Failed to read public albums:', err);
+    return cachedR2Albums || [];
+  }
+}
+
+export async function upsertR2PublicAlbum(
+  albumInput: Partial<R2StoredAlbum>
+): Promise<R2StoredAlbum> {
+  const cleanAlbum = sanitizeR2AlbumRecord(albumInput);
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return cleanAlbum;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2PublicAlbumsManifest(client, cfg.bucketName);
+  const idx = existing.findIndex(a => a.id === cleanAlbum.id);
+  const nextList =
+    idx !== -1
+      ? existing.map((a, i) => (i === idx ? { ...a, ...cleanAlbum } : a))
+      : [cleanAlbum, ...existing];
+  await saveR2PublicAlbumsManifest(client, cfg.bucketName, nextList);
+  return cleanAlbum;
+}
+
+export async function deleteR2PublicAlbum(albumId: string): Promise<boolean> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return true;
+
+  const client = getR2Client(cfg);
+  const existing = await readR2PublicAlbumsManifest(client, cfg.bucketName);
+  const nextList = existing.filter(a => a.id !== albumId);
+  if (nextList.length !== existing.length) {
+    await saveR2PublicAlbumsManifest(client, cfg.bucketName, nextList);
+  }
+  return true;
+}
+
+const CATALOG_CHARTS_KEY = 'catalog/trending-charts.json';
+
+export interface R2TrendingChartsMap {
+  vn?: Record<string, unknown> | null;
+  global?: Record<string, unknown> | null;
+}
+
+let cachedR2Charts: R2TrendingChartsMap | null = null;
+let cachedR2ChartsAt = 0;
+
+export async function getR2TrendingCharts(
+  forceRefresh: boolean = false
+): Promise<R2TrendingChartsMap> {
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return cachedR2Charts || {};
+
+  if (
+    !forceRefresh &&
+    cachedR2Charts &&
+    Date.now() - cachedR2ChartsAt < 30_000
+  ) {
+    return cachedR2Charts;
+  }
+
+  try {
+    const client = getR2Client(cfg);
+    const res = await client.send(
+      new GetObjectCommand({
+        Bucket: cfg.bucketName,
+        Key: CATALOG_CHARTS_KEY,
+      })
+    );
+    const bodyText = await res.Body?.transformToString('utf-8');
+    if (!bodyText) return {};
+    const parsed = JSON.parse(bodyText);
+    if (parsed && typeof parsed === 'object') {
+      cachedR2Charts = parsed as R2TrendingChartsMap;
+      cachedR2ChartsAt = Date.now();
+      return cachedR2Charts;
+    }
+    return {};
+  } catch (err: unknown) {
+    const name = (err as { name?: string })?.name || '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return {};
+    console.warn('[Cloudflare R2] Failed to read trending charts:', err);
+    return cachedR2Charts || {};
+  }
+}
+
+export async function saveR2TrendingCharts(
+  chartsMap: R2TrendingChartsMap
+): Promise<R2TrendingChartsMap> {
+  cachedR2Charts = chartsMap;
+  cachedR2ChartsAt = Date.now();
+
+  const cfg = loadR2Config();
+  if (!isR2Configured(cfg)) return chartsMap;
+
+  const client = getR2Client(cfg);
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucketName,
+      Key: CATALOG_CHARTS_KEY,
+      Body: JSON.stringify(chartsMap),
+      ContentType: 'application/json; charset=utf-8',
+    })
+  );
+  return chartsMap;
+}
+

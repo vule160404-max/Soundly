@@ -6,9 +6,22 @@ import {
   batchUpdateR2CatalogTracks,
   incrementR2CatalogTrackPlays,
   deleteR2CatalogTrack,
+  getR2PublicAlbums,
+  upsertR2PublicAlbum,
+  deleteR2PublicAlbum,
+  getR2TrendingCharts,
+  saveR2TrendingCharts,
   R2StoredTrack,
+  R2StoredAlbum,
 } from '../_lib/r2.js';
 import { fetchSpotifyCollectionMetadata } from '../_lib/spotifyAlbum.js';
+import {
+  AUTO_SYNC_TTL_MS,
+  MatchableCatalogTrack,
+  TrendingChartRegion,
+  TrendingChartSnapshot,
+  syncSpotifyTrendingChart,
+} from '../_lib/spotifyChart.js';
 import { readJsonBody, sendJson } from '../_utils.js';
 
 interface BatchBody {
@@ -38,6 +51,215 @@ export default async function handler(
 
   if (!id) {
     sendJson(res, 400, { error: 'Track ID is required' });
+    return;
+  }
+
+  // Handle GET / POST /api/tracks/trending-chart
+  if (id === 'trending-chart') {
+    const isStaleChart = (snap?: TrendingChartSnapshot | null): boolean => {
+      if (!snap || !snap.updatedAt) return true;
+      const nextSyncMs = snap.nextAutoSyncAt ? Date.parse(snap.nextAutoSyncAt) : NaN;
+      if (Number.isFinite(nextSyncMs)) return Date.now() >= nextSyncMs;
+      const updatedMs = Date.parse(snap.updatedAt);
+      return !Number.isFinite(updatedMs) || Date.now() - updatedMs >= AUTO_SYNC_TTL_MS;
+    };
+
+    if (req.method === 'GET') {
+      try {
+        const reqUrl = new URL(req.url || '/api/tracks/trending-chart', 'http://localhost');
+        const allowAutoSync = reqUrl.searchParams.get('autoSync') !== '0';
+        const stored = await getR2TrendingCharts();
+        let vnChart = (stored.vn as TrendingChartSnapshot | null | undefined) || null;
+        let globalChart = (stored.global as TrendingChartSnapshot | null | undefined) || null;
+        let autoSynced = false;
+
+        if (allowAutoSync && (isStaleChart(vnChart) || isStaleChart(globalChart))) {
+          const catalog = await getR2CatalogTracks();
+          if (catalog.length > 0) {
+            const nextMap = { ...stored };
+            if (isStaleChart(vnChart)) {
+              try {
+                vnChart = await syncSpotifyTrendingChart({
+                  region: 'vn',
+                  catalogTracks: catalog,
+                  previousSnapshot: vnChart,
+                  customSpotifyUrl: vnChart?.customSpotifyUrl,
+                });
+                nextMap.vn = vnChart as unknown as Record<string, unknown>;
+                autoSynced = true;
+              } catch (err) {
+                console.warn('[TrendingChart] Auto-sync VN failed:', err);
+              }
+            }
+            if (isStaleChart(globalChart)) {
+              try {
+                globalChart = await syncSpotifyTrendingChart({
+                  region: 'global',
+                  catalogTracks: catalog,
+                  previousSnapshot: globalChart,
+                  customSpotifyUrl: globalChart?.customSpotifyUrl,
+                });
+                nextMap.global = globalChart as unknown as Record<string, unknown>;
+                autoSynced = true;
+              } catch (err) {
+                console.warn('[TrendingChart] Auto-sync Global failed:', err);
+              }
+            }
+            if (autoSynced) {
+              await saveR2TrendingCharts(nextMap);
+            }
+          }
+        }
+
+        sendJson(res, 200, {
+          charts: {
+            vn: vnChart,
+            global: globalChart,
+          },
+          autoSynced,
+        });
+      } catch (err: unknown) {
+        sendJson(res, 500, {
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Không thể tải Bảng Xếp Hạng Thịnh Hành.',
+        });
+      }
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const body = await readJsonBody<{
+          region?: TrendingChartRegion | 'all';
+          customSpotifyUrl?: string;
+          clearCustomUrl?: boolean;
+          catalogSummary?: MatchableCatalogTrack[];
+        }>(req);
+
+        const targetRegion = body.region || 'all';
+        const regions: TrendingChartRegion[] =
+          targetRegion === 'vn'
+            ? ['vn']
+            : targetRegion === 'global'
+              ? ['global']
+              : ['vn', 'global'];
+
+        const stored = await getR2TrendingCharts(true);
+        const r2Catalog = await getR2CatalogTracks();
+        const catalogMap = new Map<string, MatchableCatalogTrack>();
+        for (const t of r2Catalog) {
+          catalogMap.set(t.id, t);
+        }
+        if (Array.isArray(body.catalogSummary)) {
+          for (const t of body.catalogSummary) {
+            if (t && t.id && !catalogMap.has(t.id)) {
+              catalogMap.set(t.id, t);
+            }
+          }
+        }
+        const mergedCatalog = Array.from(catalogMap.values());
+        const nextMap = { ...stored };
+
+        for (const reg of regions) {
+          const prevSnap = (stored[reg] as TrendingChartSnapshot | null | undefined) || null;
+          const customUrl = body.clearCustomUrl
+            ? undefined
+            : body.customSpotifyUrl !== undefined
+              ? body.customSpotifyUrl
+              : prevSnap?.customSpotifyUrl;
+
+          const updated = await syncSpotifyTrendingChart({
+            region: reg,
+            catalogTracks: mergedCatalog,
+            previousSnapshot: prevSnap,
+            customSpotifyUrl: customUrl,
+          });
+          nextMap[reg] = updated as unknown as Record<string, unknown>;
+        }
+
+        await saveR2TrendingCharts(nextMap);
+        sendJson(res, 200, {
+          success: true,
+          charts: {
+            vn: (nextMap.vn as TrendingChartSnapshot | null | undefined) || null,
+            global: (nextMap.global as TrendingChartSnapshot | null | undefined) || null,
+          },
+        });
+      } catch (err: unknown) {
+        sendJson(res, 400, {
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Đồng bộ BXH Spotify thất bại.',
+        });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { error: 'Method Not Allowed' });
+    return;
+  }
+
+  // Handle GET / POST / DELETE /api/tracks/public-albums
+  if (id === 'public-albums') {
+    if (req.method === 'GET') {
+      try {
+        const albums = await getR2PublicAlbums();
+        sendJson(res, 200, albums);
+      } catch (err: unknown) {
+        sendJson(res, 500, {
+          error: err instanceof Error ? err.message : 'Failed to load public albums',
+        });
+      }
+      return;
+    }
+
+    if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+      try {
+        const body = await readJsonBody<{ album?: Partial<R2StoredAlbum> } & Partial<R2StoredAlbum>>(req);
+        const payload = body.album && typeof body.album === 'object' ? body.album : body;
+        if (!payload.title || !String(payload.title).trim()) {
+          sendJson(res, 400, { error: 'Album title is required' });
+          return;
+        }
+        const saved = await upsertR2PublicAlbum(payload);
+        sendJson(res, 200, { success: true, album: saved });
+      } catch (err: unknown) {
+        sendJson(res, 500, {
+          error: err instanceof Error ? err.message : 'Failed to save public album',
+        });
+      }
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      try {
+        const reqUrl = new URL(req.url || '/api/tracks/public-albums', 'http://localhost');
+        const qId = reqUrl.searchParams.get('albumId') || reqUrl.searchParams.get('id') || '';
+        let targetId = qId.trim();
+        if (!targetId) {
+          const body = await readJsonBody<{ id?: string; albumId?: string }>(req).catch(
+            () => ({}) as { id?: string; albumId?: string }
+          );
+          targetId = String(body.albumId || body.id || '').trim();
+        }
+        if (!targetId) {
+          sendJson(res, 400, { error: 'albumId is required' });
+          return;
+        }
+        await deleteR2PublicAlbum(targetId);
+        sendJson(res, 200, { success: true, deletedId: targetId });
+      } catch (err: unknown) {
+        sendJson(res, 500, {
+          error: err instanceof Error ? err.message : 'Failed to delete public album',
+        });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { error: 'Method Not Allowed' });
     return;
   }
 

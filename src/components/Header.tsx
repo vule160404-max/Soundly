@@ -18,7 +18,7 @@ import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
 import { SPOTIFY_GENRE_NAMES } from '../data/mockTracks';
 import { PWAInstallButton } from './PWAInstallButton';
-import { ArtistProfile, Track } from '../types/music';
+import { ArtistProfile, Playlist, Track } from '../types/music';
 import { ArtistAvatar } from './ArtistAvatar';
 import { getSearchSuggestions, normalizeSearchText } from '../utils/artistSync';
 
@@ -29,7 +29,9 @@ interface HeaderProps {
   setActiveGenre: (genre: string) => void;
   allTracks: Track[];
   artists: ArtistProfile[];
+  publicAlbums?: Playlist[];
   onSelectArtist: (artist: ArtistProfile) => void;
+  onSelectPlaylist?: (playlist: Playlist) => void;
   onNavigateToExplore: () => void;
   onOpenSleepTimer: () => void;
   onOpenMobileMenu?: () => void;
@@ -66,7 +68,9 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveGenre,
   allTracks,
   artists,
+  publicAlbums = [],
   onSelectArtist,
+  onSelectPlaylist,
   onNavigateToExplore,
   onOpenSleepTimer,
   onOpenMobileMenu,
@@ -88,8 +92,8 @@ export const Header: React.FC<HeaderProps> = ({
   ];
 
   const suggestions = useMemo(
-    () => getSearchSuggestions(searchQuery, allTracks, artists),
-    [searchQuery, allTracks, artists]
+    () => getSearchSuggestions(searchQuery, allTracks, artists, publicAlbums),
+    [searchQuery, allTracks, artists, publicAlbums]
   );
 
   // Close search dropdown when clicking outside
@@ -130,12 +134,14 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   type FlatSuggestion =
+    | { kind: 'album'; playlist: Playlist }
     | { kind: 'artist'; artist: ArtistProfile }
     | { kind: 'track'; track: Track }
     | { kind: 'genre'; genre: string };
 
   const flatItems = useMemo<FlatSuggestion[]>(() => {
     const list: FlatSuggestion[] = [];
+    suggestions.albums.forEach(playlist => list.push({ kind: 'album', playlist }));
     suggestions.artists.forEach(artist => list.push({ kind: 'artist', artist }));
     suggestions.tracks.forEach(track => list.push({ kind: 'track', track }));
     suggestions.genres.forEach(genre => list.push({ kind: 'genre', genre }));
@@ -143,7 +149,11 @@ export const Header: React.FC<HeaderProps> = ({
   }, [suggestions]);
 
   const activateSuggestion = (item: FlatSuggestion) => {
-    if (item.kind === 'artist') {
+    if (item.kind === 'album') {
+      recordSearch(item.playlist.title);
+      onSelectPlaylist?.(item.playlist);
+      setIsSearchOpen(false);
+    } else if (item.kind === 'artist') {
       recordSearch(item.artist.name);
       onSelectArtist(item.artist);
       setIsSearchOpen(false);
@@ -237,6 +247,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const hasQuery = searchQuery.trim().length > 0;
   const hasAnyMatches =
+    suggestions.albums.length > 0 ||
     suggestions.artists.length > 0 ||
     suggestions.tracks.length > 0 ||
     suggestions.genres.length > 0;
@@ -440,8 +451,8 @@ export const Header: React.FC<HeaderProps> = ({
                 if (!isSearchOpen) setIsSearchOpen(true);
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Tìm bài hát, nghệ sĩ hoặc thể loại..."
-              aria-label="Tìm bài hát, nghệ sĩ hoặc thể loại"
+              placeholder="Tìm album, bài hát, nghệ sĩ hoặc thể loại..."
+              aria-label="Tìm album, bài hát, nghệ sĩ hoặc thể loại"
               aria-expanded={isSearchOpen}
               className="w-full min-h-[44px] md:min-h-[40px] pl-10 pr-10 py-2 bg-[#141d3d] hover:bg-[#1a254d] focus:bg-[#1a254d] text-base sm:text-sm text-[#f7f5f0] placeholder-[#7f8bb3] rounded-full border border-[#222f5e] focus:border-[#f47b64]/60 transition-all outline-none"
             />
@@ -516,6 +527,57 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               ) : (
                 <div className="p-2 space-y-2">
+                  {/* Public App Albums Suggestions (Search-Only Discovery) */}
+                  {hasQuery && suggestions.albums.length > 0 && (
+                    <div>
+                      <p className="px-2.5 py-1 text-[11px] font-bold text-[#a3aed0]">
+                        Album trên Soundly
+                      </p>
+                      <div className="space-y-0.5">
+                        {suggestions.albums.map(album => {
+                          itemCursor += 1;
+                          const isHighlighted = itemCursor === highlightedIndex;
+                          return (
+                            <button
+                              key={album.id}
+                              type="button"
+                              onClick={() =>
+                                activateSuggestion({ kind: 'album', playlist: album })
+                              }
+                              className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-xl text-left transition-colors min-h-[48px] ${
+                                isHighlighted
+                                  ? 'bg-[#1e2b5c] text-[#f7f5f0]'
+                                  : 'hover:bg-[#17224b] text-[#f7f5f0]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <img
+                                  src={album.coverUrl || '/assets/aistudio/soundly-default-cover.svg'}
+                                  alt={album.title}
+                                  loading="lazy"
+                                  referrerPolicy="no-referrer"
+                                  onError={e => {
+                                    e.currentTarget.src = '/assets/aistudio/soundly-default-cover.svg';
+                                  }}
+                                  className="w-10 h-10 rounded-lg object-cover shrink-0 bg-[#162047]"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-xs sm:text-sm font-bold truncate">
+                                    {renderHighlight(album.title, searchQuery)}
+                                  </p>
+                                  <p className="text-[11px] text-[#a3aed0] truncate tabular-nums">
+                                    Album Soundly · {album.trackIds.length} bài hát
+                                  </p>
+                                </div>
+                              </div>
+                              <ArrowUpRight className="w-4 h-4 text-[#f47b64] shrink-0" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Artists Suggestions */}
                   {suggestions.artists.length > 0 && (
                     <div>
