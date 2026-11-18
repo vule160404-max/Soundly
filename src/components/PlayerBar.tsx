@@ -172,7 +172,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
       {/* ======================================================== */}
       <footer className="hidden md:flex fixed bottom-0 left-0 right-0 z-40 bg-[#070b1a] border-t border-[#1e2a54] h-[88px] px-6 items-center justify-between select-none shadow-2xl text-[#f7f5f0]">
         {/* LEFT ZONE: Currently Playing Track Info */}
-        <div className="flex items-center gap-3.5 w-1/4 min-w-[200px] max-w-[320px]">
+        <div className="flex items-center gap-3.5 flex-1 basis-0 min-w-0">
           {currentTrack ? (
             <>
               <div
@@ -258,7 +258,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
         </div>
 
         {/* CENTER ZONE: Playback Controls & Precision Seek Slider */}
-        <div className="flex flex-col items-center justify-center flex-1 max-w-xl px-4 md:px-6">
+        <div className="flex flex-col items-center justify-center flex-none w-[min(560px,46%)] px-4 md:px-6">
           {/* Playback Buttons */}
           <div className="flex items-center gap-5 mb-1.5">
             {/* Shuffle Toggle */}
@@ -356,7 +356,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({ onOpenMobileNowPlaying }) 
         </div>
 
         {/* RIGHT ZONE: Utility Drawer Toggles & Volume */}
-        <div className="flex items-center justify-end gap-2 md:gap-3 w-1/4 min-w-[160px] max-w-[280px]">
+        <div className="flex items-center justify-end gap-2 md:gap-3 flex-1 basis-0 min-w-0">
           {/* Speed Adjustment */}
           <button
             onClick={handleSpeedCycle}
