@@ -19,6 +19,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 import { findActiveLyricIndex, getTrackSyncedLines } from '../utils/lyricsSync';
+import { useTrackLyrics } from '../hooks/useTrackLyrics';
 
 interface MobileNowPlayingModalProps {
   isOpen: boolean;
@@ -61,9 +62,11 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
 
   const liked = currentTrack ? isLiked(currentTrack.id) : false;
 
+  const trackWithLyrics = useTrackLyrics(currentTrack, isOpen);
+
   const syncedLines = useMemo(
-    () => getTrackSyncedLines(currentTrack, duration),
-    [currentTrack, duration]
+    () => getTrackSyncedLines(trackWithLyrics, duration),
+    [trackWithLyrics, duration]
   );
 
   const activeLyricIdx = useMemo(
@@ -104,13 +107,13 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
           className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex justify-center select-none"
         >
           {/* Scrollable Spotify-style Mobile / Full Now Playing Viewport */}
-          <div className="w-full max-w-[480px] h-full bg-[#0a0a0a] text-white overflow-y-auto overflow-x-hidden relative shadow-2xl soundly-overlay-top-safe soundly-bottom-safe">
+          <div className="w-full max-w-[480px] lg:max-w-[1200px] h-full bg-[#0a0a0a] text-white overflow-y-auto overflow-x-hidden relative shadow-2xl soundly-overlay-top-safe soundly-bottom-safe lg:grid lg:grid-cols-[minmax(420px,5fr)_6fr] lg:gap-10 lg:px-10 lg:py-8 lg:items-start">
             {/* ===================================================== */}
             {/* HERO ARTWORK + PLAYER CONTROLS SECTION                */}
             {/* ===================================================== */}
-            <div className="relative flex flex-col justify-between min-h-[86dvh] pb-2">
+            <div className="relative flex flex-col justify-between min-h-[86dvh] pb-2 lg:min-h-[calc(100dvh-4rem)] lg:sticky lg:top-0 lg:rounded-3xl lg:overflow-hidden lg:bg-[#111] lg:border lg:border-white/5 lg:shadow-2xl">
               {/* Full-bleed Hero Artwork Backdrop with Smooth Scrim */}
-              <div className="absolute inset-x-0 top-0 h-[66%] pointer-events-none overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-[66%] lg:h-[60%] pointer-events-none overflow-hidden">
                 <motion.img
                   key={currentTrack.id}
                   initial={{ scale: 1.04, opacity: 0.7 }}
@@ -156,10 +159,10 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
               </div>
 
               {/* Spacer pushing track info & controls to lower half */}
-              <div className="flex-1 min-h-[240px]" />
+              <div className="flex-1 min-h-[240px] lg:min-h-[120px]" />
 
               {/* Track Info + Controls Block */}
-              <div className="relative z-10 px-5 pt-4">
+              <div className="relative z-10 px-5 lg:px-8 pt-4 lg:pb-6">
                 {/* Small Square Cover + Track Title/Artist + Dismiss & Green Check Like Button */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
@@ -361,9 +364,9 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
             {/* ===================================================== */}
             {/* SCROLLABLE CARDS BELOW PLAYER CONTROLS                */}
             {/* ===================================================== */}
-            <div className="px-4 pb-12 space-y-4">
+            <div className="px-4 lg:px-0 pb-12 lg:pb-8 space-y-4 lg:space-y-6 min-w-0">
               {/* 1. "Bản xem trước lời bài hát" Card (Matches Screenshot 1 & 3) */}
-              <div className="rounded-2xl bg-[#b85a52] p-5 shadow-2xl relative overflow-hidden">
+              <div className="rounded-2xl lg:rounded-3xl bg-[#b85a52] p-5 lg:p-8 shadow-2xl relative overflow-hidden">
                 <div className="flex items-center justify-between mb-3.5">
                   <h3 className="text-sm font-bold text-white/95 tracking-tight">
                     Bản xem trước lời bài hát
@@ -382,7 +385,7 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                         <p
                           key={`${line.time}-${idx}`}
                           onClick={() => seek(line.time)}
-                          className={`text-[21px] sm:text-2xl font-extrabold leading-[1.32] tracking-tight cursor-pointer transition-all duration-300 ${
+                          className={`text-[21px] sm:text-2xl lg:text-[32px] font-extrabold leading-[1.32] tracking-tight cursor-pointer transition-all duration-300 ${
                             isSungOrActive
                               ? 'text-white'
                               : 'text-black/45 hover:text-white/75'
@@ -422,7 +425,7 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                 }}
                 className="rounded-2xl overflow-hidden bg-[#181818] border border-white/5 shadow-2xl cursor-pointer group"
               >
-                <div className="relative h-56 w-full overflow-hidden">
+                <div className="relative h-56 lg:h-80 w-full overflow-hidden">
                   <img
                     src={currentTrack.coverUrl}
                     alt={currentTrack.artist}

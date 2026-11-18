@@ -11,6 +11,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { usePlayer } from '../context/PlayerContext';
 import { LyricLine } from '../types/music';
 import { findActiveLyricIndex, getTrackSyncedLines } from '../utils/lyricsSync';
+import { useTrackLyrics } from '../hooks/useTrackLyrics';
 
 export const LyricsDrawer: React.FC = () => {
   const {
@@ -25,62 +26,7 @@ export const LyricsDrawer: React.FC = () => {
   } = usePlayer();
 
   const [viewMode, setViewMode] = useState<'synced' | 'plain'>('synced');
-  const [fetchedLyricsTrack, setFetchedLyricsTrack] = useState<{
-    id: string;
-    lyrics?: LyricLine[];
-    syncedLyrics?: string;
-    plainLyrics?: string;
-    lyricsMode?: 'synced' | 'plain' | 'none';
-  } | null>(null);
-  const activeLineRef = useRef<HTMLDivElement | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-
-  const trackForLyrics = useMemo(() => {
-    if (!currentTrack) return null;
-    if (fetchedLyricsTrack && fetchedLyricsTrack.id === currentTrack.id) {
-      return {
-        ...currentTrack,
-        lyrics:
-          fetchedLyricsTrack.lyrics && fetchedLyricsTrack.lyrics.length > 0
-            ? fetchedLyricsTrack.lyrics
-            : currentTrack.lyrics,
-        syncedLyrics: fetchedLyricsTrack.syncedLyrics || currentTrack.syncedLyrics,
-        plainLyrics: fetchedLyricsTrack.plainLyrics || currentTrack.plainLyrics,
-        lyricsMode: fetchedLyricsTrack.lyricsMode || currentTrack.lyricsMode,
-      };
-    }
-    return currentTrack;
-  }, [currentTrack, fetchedLyricsTrack]);
-
-  useEffect(() => {
-    if (!isLyricsOpen || !currentTrack?.id) return;
-    const alreadyHasLyrics =
-      Boolean(currentTrack.syncedLyrics?.trim()) ||
-      Boolean(currentTrack.plainLyrics?.trim()) ||
-      (Array.isArray(currentTrack.lyrics) && currentTrack.lyrics.length > 2);
-    if (alreadyHasLyrics || currentTrack.lyricsMode === 'none') return;
-    if (fetchedLyricsTrack?.id === currentTrack.id) return;
-
-    let cancelled = false;
-    fetch(`/api/tracks/${encodeURIComponent(currentTrack.id)}`)
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => {
-        if (cancelled || !data || !data.id) return;
-        setFetchedLyricsTrack({
-          id: data.id,
-          lyrics: Array.isArray(data.lyrics) ? data.lyrics : [],
-          syncedLyrics: data.syncedLyrics,
-          plainLyrics: data.plainLyrics,
-          lyricsMode: data.lyricsMode,
-        });
-      })
-      .catch(() => null);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isLyricsOpen, currentTrack, fetchedLyricsTrack?.id]);
-
+  const trackForLyrics = useTrackLyrics(currentTrack, isLyricsOpen);
   const syncedLines = useMemo<LyricLine[]>(
     () => getTrackSyncedLines(trackForLyrics, duration),
     [trackForLyrics, duration]
