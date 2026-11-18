@@ -64,6 +64,8 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
 
   const trackWithLyrics = useTrackLyrics(currentTrack, isOpen);
 
+  const lyricsFetched = trackWithLyrics !== currentTrack;
+
   const syncedLines = useMemo(
     () => getTrackSyncedLines(trackWithLyrics, duration),
     [trackWithLyrics, duration]
@@ -260,7 +262,7 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                 </div>
 
                 {/* Primary Playback Controls Row */}
-                <div className="mt-2 flex items-center justify-between">
+                <div className="mt-2 grid grid-cols-5 items-center justify-items-center">
                   {/* Shuffle Toggle (Spotify Green with dot when active) */}
                   <button
                     type="button"
@@ -309,6 +311,8 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                   >
                     <SkipForward className="w-8 h-8 fill-white" />
                   </button>
+                  {/* Empty slot keeps Play/Pause perfectly centered */}
+                  <span aria-hidden="true" className="min-h-[44px] min-w-[44px]" />
                 </div>
 
                 {/* Secondary Utility Icons Row (Speaker/Visualizer left, Share & Queue right) */}
@@ -398,9 +402,13 @@ export const MobileNowPlayingModal: React.FC<MobileNowPlayingModalProps> = ({
                   </div>
                 ) : (
                   <div className="py-6 text-left">
-                    <p className="text-xl font-extrabold text-white/90 leading-snug">
-                      Giai điệu không lời hoặc đang cập nhật lời bài hát...
-                    </p>
+                    {lyricsFetched || currentTrack.lyricsMode === 'none' ? (
+                      <p className="text-xl font-extrabold text-white/90 leading-snug">
+                        Giai điệu không lời hoặc đang cập nhật lời bài hát...
+                      </p>
+                    ) : (
+                      <p className="text-base font-bold text-white/70 animate-pulse">Đang tải lời bài hát...</p>
+                    )}
                   </div>
                 )}
 

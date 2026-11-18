@@ -26,6 +26,8 @@ export const LyricsDrawer: React.FC = () => {
   } = usePlayer();
 
   const [viewMode, setViewMode] = useState<'synced' | 'plain'>('synced');
+  const activeLineRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const trackForLyrics = useTrackLyrics(currentTrack, isLyricsOpen);
   const syncedLines = useMemo<LyricLine[]>(
     () => getTrackSyncedLines(trackForLyrics, duration),
